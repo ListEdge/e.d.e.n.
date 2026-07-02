@@ -1,0 +1,53 @@
+import { createAIProvider, type AIProvider } from "./ai";
+import { createDatabaseProvider, type DatabaseProvider } from "./database";
+import type { VoiceProvider } from "./voice/types";
+import type { MapsProvider } from "./maps/types";
+import type { EmailProvider } from "./email/types";
+import type { CalendarProvider } from "./calendar/types";
+import type { StorageProvider } from "./storage/types";
+import type { DeploymentProvider } from "./deployment/types";
+import type { GitHubProvider } from "./github/types";
+import type { PhoneProvider } from "./phone/types";
+import type { PaymentsProvider } from "./payments/types";
+import type { HomeProvider } from "./home/types";
+import type { SearchProvider } from "./search/types";
+
+/**
+ * Everything external to Eden lives behind this registry.
+ * Engines receive it at start and never construct providers themselves.
+ * Optional providers are null until an implementation is configured —
+ * the contracts are already defined so implementations drop straight in.
+ */
+export interface ProviderRegistry {
+  ai: AIProvider;
+  database: DatabaseProvider;
+  voice: VoiceProvider | null;
+  maps: MapsProvider | null;
+  email: EmailProvider | null;
+  calendar: CalendarProvider | null;
+  storage: StorageProvider | null;
+  deployment: DeploymentProvider | null;
+  github: GitHubProvider | null;
+  phone: PhoneProvider | null;
+  payments: PaymentsProvider | null;
+  home: HomeProvider | null;
+  search: SearchProvider | null;
+}
+
+export function createProviders(): ProviderRegistry {
+  return {
+    ai: createAIProvider(),
+    database: createDatabaseProvider(),
+    voice: null,
+    maps: null,
+    email: null,
+    calendar: null,
+    storage: null,
+    deployment: null,
+    github: null,
+    phone: null,
+    payments: null,
+    home: null,
+    search: null,
+  };
+}

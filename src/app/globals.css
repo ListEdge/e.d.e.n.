@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: radial-gradient(120% 120% at 20% 10%, #0d0730 0%, #050310 55%, #030208 100%);
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+/* Ambient glow behind the core */
+.core-glow::before,
+.core-glow::after {
+  content: "";
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+.core-glow::before {
+  width: 42vmin;
+  height: 42vmin;
+  left: calc(50% - 30vmin);
+  top: calc(50% - 32vmin);
+  background: #2b5cff;
+}
+.core-glow::after {
+  width: 44vmin;
+  height: 44vmin;
+  left: calc(50% - 10vmin);
+  top: calc(50% - 12vmin);
+  background: #c22bff;
+}
+
+.hud-panel {
+  background: rgba(13, 8, 34, 0.5);
+  border: 1px solid rgba(139, 108, 255, 0.14);
+  backdrop-filter: blur(14px);
+  border-radius: 14px;
+}
+
+.hud-label {
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #6f6a92;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.dot-online {
+  animation: breathe 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot-online { animation: none; }
+}
+
+::selection {
+  background: rgba(139, 108, 255, 0.4);
+}
+
+input:focus-visible, button:focus-visible {
+  outline: 1px solid rgba(139, 108, 255, 0.7);
+  outline-offset: 2px;
+}
