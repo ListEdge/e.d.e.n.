@@ -66,6 +66,7 @@ export interface NotificationRepo {
 export interface ApprovalRepo {
   request(a: Omit<Approval, "id" | "created_at" | "resolved_at" | "status">): Promise<Approval>;
   pending(): Promise<Approval[]>;
+  resolve(id: string, status: "approved" | "denied"): Promise<Approval>;
 }
 
 export interface DatabaseProvider {
