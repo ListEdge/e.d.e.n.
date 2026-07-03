@@ -36,7 +36,8 @@ export type EdenEventType =
   | "CapabilityRegistered"
   | "EngineStarted"
   | "EngineStopped"
-  | "ProviderError";
+  | "ProviderError"
+  | "SearchPerformed";
 
 export interface EdenEvent<T = Record<string, unknown>> {
   id: string;
