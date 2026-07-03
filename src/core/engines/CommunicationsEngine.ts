@@ -14,21 +14,33 @@ export class CommunicationsEngine implements Engine {
     this.ctx = ctx;
   }
 
-  async sendEmail(to: string, subject: string, body: string): Promise<string> {
+  /**
+   * Sends an email. Normally gated behind approval — pass approvalId only
+   * when this call is resuming an already-approved request (the kernel's
+   * resumeApproval does this); it skips asking for a second approval.
+   */
+  async sendEmail(
+    to: string,
+    subject: string,
+    body: string,
+    opts: { approvalId?: string } = {}
+  ): Promise<string> {
     const email = this.ctx.providers.email;
     if (!email?.available()) {
       return "Email provider not configured. Add RESEND_API_KEY to my environment.";
     }
 
-    const { allowed, pendingApprovalId } = await this.ctx.authorize(
-      "send_email",
-      "communicate",
-      { to, subject }
-    );
-    if (!allowed) {
-      return `I've prepared that email to ${to} but sending it needs your approval first, ${
-        pendingApprovalId ? `(request ${pendingApprovalId})` : ""
-      }`.trim();
+    if (!opts.approvalId) {
+      const { allowed, pendingApprovalId } = await this.ctx.authorize(
+        "send_email",
+        "communicate",
+        { to, subject, body }
+      );
+      if (!allowed) {
+        return `I've prepared that email to ${to} but sending it needs your approval first${
+          pendingApprovalId ? ` (request ${pendingApprovalId})` : ""
+        }.`;
+      }
     }
 
     await email.send(to, subject, body);
@@ -36,21 +48,30 @@ export class CommunicationsEngine implements Engine {
     return "Sent.";
   }
 
-  async placeCall(number: string, purpose: string): Promise<string> {
+  /**
+   * Places a call. Same pre-authorized bypass pattern as sendEmail.
+   */
+  async placeCall(
+    number: string,
+    purpose: string,
+    opts: { approvalId?: string } = {}
+  ): Promise<string> {
     const phone = this.ctx.providers.phone;
     if (!phone?.available()) {
       return "Phone provider not configured. Implement providers/phone against the PhoneProvider contract.";
     }
 
-    const { allowed, pendingApprovalId } = await this.ctx.authorize(
-      "place_call",
-      "communicate",
-      { number, purpose }
-    );
-    if (!allowed) {
-      return `I'm ready to call ${number} but that needs your approval first, ${
-        pendingApprovalId ? `(request ${pendingApprovalId})` : ""
-      }`.trim();
+    if (!opts.approvalId) {
+      const { allowed, pendingApprovalId } = await this.ctx.authorize(
+        "place_call",
+        "communicate",
+        { number, purpose }
+      );
+      if (!allowed) {
+        return `I'm ready to call ${number} but that needs your approval first${
+          pendingApprovalId ? ` (request ${pendingApprovalId})` : ""
+        }.`;
+      }
     }
 
     const script = `Hello, this is Eden, an AI assistant. I'm calling regarding: ${purpose}`;
