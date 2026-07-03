@@ -6,8 +6,12 @@
  */
 
 export interface AIMessage {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   content: string;
+  /** On an assistant message that called a tool. */
+  toolCall?: { id: string; name: string; arguments: Record<string, unknown> };
+  /** On a tool-result message — which call this result answers. */
+  toolCallId?: string;
 }
 
 export interface AIChatRequest {
