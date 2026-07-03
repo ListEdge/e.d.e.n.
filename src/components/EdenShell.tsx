@@ -312,6 +312,8 @@ export default function EdenShell() {
       {/* Off-screen player for spoken replies */}
       <audio ref={audioRef} className="hidden" />
 
+      <RealtimeVoice available={status?.realtime.available ?? false} />
+
       <TopBar
         provider={status?.ai.provider ?? "…"}
         persistent={status?.database.persistent ?? false}
