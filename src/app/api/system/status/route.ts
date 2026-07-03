@@ -18,6 +18,9 @@ export async function GET() {
       provider: kernel.providers.database.id,
       persistent: kernel.providers.database.persistent,
     },
+    voice: {
+      available: Boolean(kernel.providers.voice?.available()),
+    },
     engines: kernel.engines.map((e) => ({ id: e.id, name: e.name, online: true })),
     capabilities: kernel.capabilities.list(),
     presence: kernel.presence.current(),
