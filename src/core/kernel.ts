@@ -96,6 +96,7 @@ async function boot(): Promise<Kernel> {
     bus,
     providers,
     authorize: (action, authority, payload) => permissions.authorize(action, authority, payload),
+    sendEmail: (to, subject, body) => communications.sendEmail(to, subject, body),
   };
   for (const engine of engines) {
     await engine.start(ctx);
