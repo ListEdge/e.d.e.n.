@@ -1,6 +1,6 @@
 import { createAIProvider, type AIProvider } from "./ai";
 import { createDatabaseProvider, type DatabaseProvider } from "./database";
-import type { VoiceProvider } from "./voice/types";
+import { createVoiceProvider, type VoiceProvider } from "./voice";
 import type { MapsProvider } from "./maps/types";
 import type { EmailProvider } from "./email/types";
 import type { CalendarProvider } from "./calendar/types";
@@ -38,7 +38,7 @@ export function createProviders(): ProviderRegistry {
   return {
     ai: createAIProvider(),
     database: createDatabaseProvider(),
-    voice: null,
+    voice: createVoiceProvider(),
     maps: null,
     email: null,
     calendar: null,
