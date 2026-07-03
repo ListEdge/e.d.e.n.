@@ -9,7 +9,8 @@ import type { CapabilityManifest } from "@/types/domain";
  *
  * A manifest with both `parameters` and `handler` is also a real, callable
  * tool — listCallable() and callTool() are what turn the registry from a
- * static list into something the Conversation Engine can actually invoke.
+ * static list into something the Conversation Engine (or a realtime voice
+ * session) can actually invoke.
  */
 export class CapabilityManager implements Engine {
   readonly id = "capabilities";
@@ -56,22 +57,35 @@ export class CapabilityManager implements Engine {
    * Eden) and the call stops there until a person signs off. This is the
    * one place tool authorization happens, so no engine's handler needs
    * to remember to gate itself.
+   *
+   * Pass opts.approvalId only when resuming an already-approved call
+   * (the kernel's resumeApproval does this) — it skips re-authorizing.
    */
-  async callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    opts: { approvalId?: string } = {}
+  ): Promise<string> {
     const manifest = this.registry.get(name);
     if (!manifest || !manifest.enabled || !manifest.parameters || !manifest.handler) {
       return `Tool "${name}" is not available.`;
     }
 
-    for (const authority of manifest.authorities) {
-      const { allowed, pendingApprovalId } = await this.ctx.authorize(name, authority, { args });
-      if (!allowed) {
-        return `That needs your approval first${
-          pendingApprovalId ? ` (request ${pendingApprovalId})` : ""
-        }.`;
+    if (!opts.approvalId) {
+      for (const authority of manifest.authorities) {
+        // Store args flat, not nested — this is what lets resuming an
+        // approval later hand the exact same shape back to the handler,
+        // regardless of whether the call originally came from here or
+        // from an engine's own direct authorize() check.
+        const { allowed, pendingApprovalId } = await this.ctx.authorize(name, authority, args);
+        if (!allowed) {
+          return `That needs your approval first${
+            pendingApprovalId ? ` (request ${pendingApprovalId})` : ""
+          }.`;
+        }
       }
     }
 
-    return manifest.handler(args);
+    return manifest.handler(args, opts);
   }
 }
