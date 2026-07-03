@@ -113,34 +113,16 @@ async function boot(): Promise<Kernel> {
   });
 
   /**
-   * Maps an approved action back to the engine call it was blocking.
-   * Each case pulls trusted values from the approval's own stored
-   * payload — never from anything a client sends when resolving —
-   * and passes approvalId so the engine skips asking for approval again.
+   * Carries out an approved action by looking it up in the same tool
+   * registry every tool call goes through — no per-action switch to keep
+   * updated as new tools get registered. approval.payload is exactly the
+   * arguments the tool was originally called with, stored flat by
+   * CapabilityManager.callTool() at request time.
    */
   async function resumeApproval(approval: Approval): Promise<string> {
-    switch (approval.action) {
-      case "send_email": {
-        const { to, subject, body } = approval.payload as {
-          to?: string;
-          subject?: string;
-          body?: string;
-        };
-        if (!to || !subject || body === undefined) {
-          return "Approved, but the original email details were incomplete.";
-        }
-        return communications.sendEmail(to, subject, body, { approvalId: approval.id });
-      }
-      case "place_call": {
-        const { number, purpose } = approval.payload as { number?: string; purpose?: string };
-        if (!number || !purpose) {
-          return "Approved, but the original call details were incomplete.";
-        }
-        return communications.placeCall(number, purpose, { approvalId: approval.id });
-      }
-      default:
-        return `Approved, but Eden doesn't yet know how to carry out "${approval.action}".`;
-    }
+    return capabilities.callTool(approval.action, approval.payload ?? {}, {
+      approvalId: approval.id,
+    });
   }
 
   return {
