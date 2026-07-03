@@ -6,6 +6,10 @@ import type { CapabilityManifest } from "@/types/domain";
  * Capabilities are installable modules that register a manifest declaring
  * what they do and which authorities they need. The registry below ships
  * with Eden's built-in capabilities; installed modules add themselves.
+ *
+ * A manifest with both `parameters` and `handler` is also a real, callable
+ * tool — listCallable() and callTool() are what turn the registry from a
+ * static list into something the Conversation Engine can actually invoke.
  */
 export class CapabilityManager implements Engine {
   readonly id = "capabilities";
@@ -38,5 +42,36 @@ export class CapabilityManager implements Engine {
 
   list(): CapabilityManifest[] {
     return [...this.registry.values()];
+  }
+
+  /** Only manifests that are switched on and actually invocable. */
+  listCallable(): CapabilityManifest[] {
+    return this.list().filter((c) => c.enabled && c.parameters && c.handler);
+  }
+
+  /**
+   * Runs a registered tool by name. Checks every authority the manifest
+   * declares before running it — read/write pass automatically, anything
+   * higher creates a pending approval (same policy as everything else in
+   * Eden) and the call stops there until a person signs off. This is the
+   * one place tool authorization happens, so no engine's handler needs
+   * to remember to gate itself.
+   */
+  async callTool(name: string, args: Record<string, unknown>): Promise<string> {
+    const manifest = this.registry.get(name);
+    if (!manifest || !manifest.enabled || !manifest.parameters || !manifest.handler) {
+      return `Tool "${name}" is not available.`;
+    }
+
+    for (const authority of manifest.authorities) {
+      const { allowed, pendingApprovalId } = await this.ctx.authorize(name, authority, { args });
+      if (!allowed) {
+        return `That needs your approval first${
+          pendingApprovalId ? ` (request ${pendingApprovalId})` : ""
+        }.`;
+      }
+    }
+
+    return manifest.handler(args);
   }
 }
