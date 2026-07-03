@@ -11,6 +11,7 @@ import type { PhoneProvider } from "./phone/types";
 import type { PaymentsProvider } from "./payments/types";
 import type { HomeProvider } from "./home/types";
 import { createSearchProvider, type SearchProvider } from "./search";
+import { createRealtimeProvider, type RealtimeProvider } from "./realtime";
 
 /**
  * Everything external to Eden lives behind this registry.
@@ -32,6 +33,7 @@ export interface ProviderRegistry {
   payments: PaymentsProvider | null;
   home: HomeProvider | null;
   search: SearchProvider | null;
+  realtime: RealtimeProvider | null;
 }
 
 export function createProviders(): ProviderRegistry {
@@ -49,5 +51,6 @@ export function createProviders(): ProviderRegistry {
     payments: null,
     home: null,
     search: createSearchProvider(),
+    realtime: createRealtimeProvider(),
   };
 }
