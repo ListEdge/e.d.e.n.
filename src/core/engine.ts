@@ -22,6 +22,12 @@ export interface EngineContext {
     authority: Authority,
     payload?: Record<string, unknown>
   ): Promise<{ allowed: boolean; pendingApprovalId?: string }>;
+  /**
+   * Sends an email through the Communications Engine (still gated by
+   * approval — this doesn't bypass anything, it's just how another
+   * engine reaches Communications without importing it).
+   */
+  sendEmail(to: string, subject: string, body: string): Promise<string>;
 }
 
 export interface Engine {
