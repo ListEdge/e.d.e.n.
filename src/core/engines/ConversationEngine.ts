@@ -1,13 +1,25 @@
 import { config } from "@/lib/config";
 import type { Engine, EngineContext } from "../engine";
+import type { AIMessage } from "@/providers/ai";
 import type { Memory, Message } from "@/types/domain";
 
 type SearchHit = { title: string; url: string; snippet: string };
+
+export type ConversationStreamEvent =
+  | { type: "conversationId"; conversationId: string }
+  | { type: "delta"; text: string }
+  | { type: "done"; conversationId: string; reply: string; provider: string; model: string };
 
 /**
  * Conversation Engine — turns user intent into a considered reply.
  * Persists both sides of the exchange, recalls relevant memories for
  * context, and publishes events so the rest of Eden can react.
+ *
+ * Two entry points share the same setup and wrap-up: handleUserMessage
+ * waits for the complete reply (used by anything that just wants text
+ * back — a future SMS or Telegram bot, for example); handleUserMessageStream
+ * yields the reply as it's generated, which is what the HUD uses so Eden
+ * can start speaking before it's finished "thinking."
  */
 export class ConversationEngine implements Engine {
   readonly id = "conversation";
@@ -79,14 +91,19 @@ export class ConversationEngine implements Engine {
     return text;
   }
 
-  async handleUserMessage(
+  /**
+   * Everything that has to happen before Eden can even start replying:
+   * make sure a conversation exists, persist the user's message, recall
+   * memories, assemble history, and search the web if the question needs
+   * it. Shared by both the streaming and non-streaming entry points.
+   */
+  private async prepareTurn(
     text: string,
     conversationId?: string | null
-  ): Promise<{ conversationId: string; reply: Message }> {
+  ): Promise<{ convoId: string; aiMessages: AIMessage[]; memories: Memory[]; searchResults?: SearchHit[] }> {
     const { bus, providers } = this.ctx;
     const db = providers.database;
 
-    // 1. Ensure a conversation exists
     let convoId = conversationId ?? null;
     if (!convoId) {
       const convo = await db.conversations.create(text.slice(0, 80));
@@ -94,25 +111,19 @@ export class ConversationEngine implements Engine {
       await bus.publish("ConversationStarted", this.id, { conversationId: convoId });
     }
 
-    // 2. Persist the user's message
     await db.messages.add({ conversation_id: convoId, role: "user", content: text });
     await bus.publish("MessageReceived", this.id, { conversationId: convoId, text });
 
-    // 3. Recall relevant memories
     const memories = await db.memories.search(text, 5);
     if (memories.length > 0) {
       await bus.publish("MemoryRecalled", this.id, { count: memories.length });
     }
 
-    // 4. Build context from recent history
     const history = await db.messages.listByConversation(convoId, 20);
-    const aiMessages = history
+    const aiMessages: AIMessage[] = history
       .filter((m) => m.role !== "system")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-    // 4b. Reach for live web search when the question needs current-world
-    // facts Eden's training data can't be trusted to know. Never fatal —
-    // a search failure just means Eden answers without it.
     let searchResults: SearchHit[] | undefined;
     if (providers.search?.available() && this.needsSearch(text)) {
       try {
@@ -130,7 +141,57 @@ export class ConversationEngine implements Engine {
       }
     }
 
-    // 5. Ask the active AI provider
+    return { convoId, aiMessages, memories, searchResults };
+  }
+
+  /**
+   * Persists the finished reply, announces it, and runs explicit memory
+   * capture on the user's original message. Shared by both entry points.
+   */
+  private async finishTurn(
+    convoId: string,
+    replyText: string,
+    provider: string,
+    model: string,
+    originalText: string
+  ): Promise<Message> {
+    const { bus, providers } = this.ctx;
+    const db = providers.database;
+
+    const reply = await db.messages.add({
+      conversation_id: convoId,
+      role: "assistant",
+      content: replyText,
+      provider,
+      model,
+    });
+    await bus.publish("MessageSent", this.id, { conversationId: convoId, provider, model });
+
+    const rememberMatch = originalText.match(/^\s*(?:eden[,\s]+)?remember(?:\s+that)?\s+(.{4,})/i);
+    if (rememberMatch) {
+      const memory = await db.memories.add({
+        type: "long_term",
+        content: rememberMatch[1].trim(),
+        importance: 3,
+        metadata: { source: "explicit", conversationId: convoId },
+      });
+      await bus.publish("MemoryCreated", this.id, { memoryId: memory.id });
+    }
+
+    return reply;
+  }
+
+  /** Waits for the complete reply. Simple, for callers that don't stream. */
+  async handleUserMessage(
+    text: string,
+    conversationId?: string | null
+  ): Promise<{ conversationId: string; reply: Message }> {
+    const { bus, providers } = this.ctx;
+    const { convoId, aiMessages, memories, searchResults } = await this.prepareTurn(
+      text,
+      conversationId
+    );
+
     let replyText: string;
     let provider = providers.ai.id;
     let model = providers.ai.defaultModel;
@@ -151,28 +212,50 @@ export class ConversationEngine implements Engine {
       replyText = `I hit a problem reaching my ${provider} core, ${config.identity.userTitle}. The error has been logged.`;
     }
 
-    // 6. Persist and announce the reply
-    const reply = await db.messages.add({
-      conversation_id: convoId,
-      role: "assistant",
-      content: replyText,
-      provider,
-      model,
-    });
-    await bus.publish("MessageSent", this.id, { conversationId: convoId, provider, model });
+    const reply = await this.finishTurn(convoId, replyText, provider, model, text);
+    return { conversationId: convoId, reply };
+  }
 
-    // 7. Simple explicit memory capture: "remember ..." / "remember that ..."
-    const rememberMatch = text.match(/^\s*(?:eden[,\s]+)?remember(?:\s+that)?\s+(.{4,})/i);
-    if (rememberMatch) {
-      const memory = await db.memories.add({
-        type: "long_term",
-        content: rememberMatch[1].trim(),
-        importance: 3,
-        metadata: { source: "explicit", conversationId: convoId },
+  /**
+   * Streams the reply as the model generates it. This is what lets the
+   * HUD show Eden's words appearing live and start speaking a sentence
+   * before the rest of the reply even exists.
+   */
+  async *handleUserMessageStream(
+    text: string,
+    conversationId?: string | null
+  ): AsyncGenerator<ConversationStreamEvent> {
+    const { bus, providers } = this.ctx;
+    const { convoId, aiMessages, memories, searchResults } = await this.prepareTurn(
+      text,
+      conversationId
+    );
+
+    yield { type: "conversationId", conversationId: convoId };
+
+    let replyText = "";
+    const provider = providers.ai.id;
+    const model = providers.ai.defaultModel;
+    try {
+      for await (const chunk of providers.ai.chatStream({
+        system: this.systemPrompt(memories, searchResults),
+        messages: aiMessages,
+        maxTokens: 1024,
+      })) {
+        replyText += chunk;
+        yield { type: "delta", text: chunk };
+      }
+    } catch (err) {
+      await bus.publish("ProviderError", this.id, {
+        provider,
+        error: err instanceof Error ? err.message : String(err),
       });
-      await bus.publish("MemoryCreated", this.id, { memoryId: memory.id });
+      const fallback = `I hit a problem reaching my ${provider} core, ${config.identity.userTitle}. The error has been logged.`;
+      replyText += fallback;
+      yield { type: "delta", text: fallback };
     }
 
-    return { conversationId: convoId, reply };
+    const reply = await this.finishTurn(convoId, replyText, provider, model, text);
+    yield { type: "done", conversationId: convoId, reply: reply.content, provider, model };
   }
 }
