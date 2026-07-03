@@ -20,5 +20,6 @@ export const config = {
   identity: {
     userTitle: process.env.EDEN_USER_TITLE ?? "Sir",
     ownerName: process.env.EDEN_OWNER_NAME ?? "",
+    ownerLocation: process.env.EDEN_OWNER_LOCATION ?? "Christchurch, New Zealand",
   },
 };
