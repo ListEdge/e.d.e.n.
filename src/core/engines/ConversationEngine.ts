@@ -2,6 +2,8 @@ import { config } from "@/lib/config";
 import type { Engine, EngineContext } from "../engine";
 import type { Memory, Message } from "@/types/domain";
 
+type SearchHit = { title: string; url: string; snippet: string };
+
 /**
  * Conversation Engine — turns user intent into a considered reply.
  * Persists both sides of the exchange, recalls relevant memories for
@@ -16,7 +18,7 @@ export class ConversationEngine implements Engine {
     this.ctx = ctx;
   }
 
-  private systemPrompt(memories: Memory[]): string {
+  private systemPrompt(memories: Memory[], searchResults?: SearchHit[]): string {
     const title = config.identity.userTitle;
     const owner = config.identity.ownerName || "the user";
     const memoryBlock =
@@ -25,13 +27,33 @@ export class ConversationEngine implements Engine {
             .map((m) => `- [${m.type}] ${m.content}`)
             .join("\n")}`
         : "";
+    const searchBlock =
+      searchResults && searchResults.length > 0
+        ? `\n\nLive web search results (use these for current facts, cite naturally, do not invent beyond them):\n${searchResults
+            .map((r) => `- ${r.title}: ${r.snippet} (${r.url})`)
+            .join("\n")}`
+        : "";
 
     return [
       `You are Eden, a personal AI operating system built for ${owner}.`,
       `Address the user as "${title}" — composed, precise, quietly capable. Think JARVIS, not a chatbot.`,
       `Be concise. Prefer plain English. When asked to do something Eden cannot yet do, say so honestly and describe what capability would need to be connected.`,
       memoryBlock,
+      searchBlock,
     ].join("\n");
+  }
+
+  /**
+   * Heuristic: does this message need live, current-world information
+   * that Eden's training data can't be trusted to know? Kept deliberately
+   * simple and cheap — no extra AI call just to decide whether to search.
+   */
+  private needsSearch(text: string): boolean {
+    const t = text.toLowerCase();
+    const currentEventWords =
+      /\b(today|tonight|tomorrow|this week|this weekend|right now|currently|latest|breaking|news|score|scores|result|results|weather|forecast|price|prices|stock|exchange rate|who is the|current|upcoming|schedule|release date|just (?:announced|released|happened))\b/;
+    const yearMention = /\b20(2[5-9]|[3-9]\d)\b/; // 2025 onward — recent-year questions
+    return currentEventWords.test(t) || yearMention.test(t);
   }
 
   async handleUserMessage(
@@ -65,13 +87,33 @@ export class ConversationEngine implements Engine {
       .filter((m) => m.role !== "system")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
+    // 4b. Reach for live web search when the question needs current-world
+    // facts Eden's training data can't be trusted to know. Never fatal —
+    // a search failure just means Eden answers without it.
+    let searchResults: SearchHit[] | undefined;
+    if (providers.search?.available() && this.needsSearch(text)) {
+      try {
+        searchResults = await providers.search.search(text, 5);
+        await bus.publish("SearchPerformed", this.id, {
+          conversationId: convoId,
+          query: text,
+          resultCount: searchResults.length,
+        });
+      } catch (err) {
+        await bus.publish("ProviderError", this.id, {
+          provider: providers.search.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // 5. Ask the active AI provider
     let replyText: string;
     let provider = providers.ai.id;
     let model = providers.ai.defaultModel;
     try {
       const response = await providers.ai.chat({
-        system: this.systemPrompt(memories),
+        system: this.systemPrompt(memories, searchResults),
         messages: aiMessages,
         maxTokens: 1024,
       });
