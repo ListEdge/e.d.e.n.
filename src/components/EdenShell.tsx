@@ -296,7 +296,7 @@ export default function EdenShell() {
 
   return (
     <main className="core-glow relative h-dvh w-full overflow-hidden">
-      <EdenOrb state={orbState} />
+      <EdenOrb state={orbState} audioLevelRef={voiceAudioLevelRef} />
 
       <audio ref={audioRef} className="hidden" />
 
