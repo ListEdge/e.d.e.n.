@@ -10,7 +10,7 @@ import type { GitHubProvider } from "./github/types";
 import type { PhoneProvider } from "./phone/types";
 import type { PaymentsProvider } from "./payments/types";
 import type { HomeProvider } from "./home/types";
-import type { SearchProvider } from "./search/types";
+import { createSearchProvider, type SearchProvider } from "./search";
 
 /**
  * Everything external to Eden lives behind this registry.
@@ -48,6 +48,6 @@ export function createProviders(): ProviderRegistry {
     phone: null,
     payments: null,
     home: null,
-    search: null,
+    search: createSearchProvider(),
   };
 }
