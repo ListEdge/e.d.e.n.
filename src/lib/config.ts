@@ -21,6 +21,10 @@ export const config = {
     resendKey: process.env.RESEND_API_KEY ?? "",
     from: process.env.EDEN_EMAIL_FROM ?? "",
   },
+  realtime: {
+    model: process.env.EDEN_REALTIME_MODEL ?? "gpt-realtime",
+    voice: process.env.EDEN_REALTIME_VOICE ?? "marin",
+  },
   identity: {
     userTitle: process.env.EDEN_USER_TITLE ?? "Sir",
     ownerName: process.env.EDEN_OWNER_NAME ?? "",
