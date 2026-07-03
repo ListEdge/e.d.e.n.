@@ -14,6 +14,9 @@ export const config = {
     supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
     supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
   },
+  search: {
+    tavilyKey: process.env.TAVILY_API_KEY ?? "",
+  },
   identity: {
     userTitle: process.env.EDEN_USER_TITLE ?? "Sir",
     ownerName: process.env.EDEN_OWNER_NAME ?? "",
