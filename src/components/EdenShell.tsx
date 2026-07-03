@@ -43,6 +43,7 @@ export default function EdenShell() {
   const [voiceStatus, setVoiceStatus] = useState("idle" as "idle" | "connecting" | "listening" | "speaking" | "error");
   const conversationId = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceAudioLevelRef = useRef(0);
 
   const speechGen = useRef(0);
   const speechQueueRef = useRef<Promise<string | null>[]>([]);
