@@ -21,4 +21,9 @@ export class OfflineProvider implements AIProvider {
       model: this.defaultModel,
     };
   }
+
+  async *chatStream(request: AIChatRequest): AsyncGenerator<string> {
+    const response = await this.chat(request);
+    yield response.text;
+  }
 }
