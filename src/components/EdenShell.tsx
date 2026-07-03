@@ -43,6 +43,9 @@ export default function EdenShell() {
   const [reply, setReply] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState
+    "idle" | "connecting" | "listening" | "speaking" | "error"
+  >("idle");
   const conversationId = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -303,16 +306,16 @@ export default function EdenShell() {
   );
 
   const capsEnabled = status?.capabilities.filter((c) => c.enabled).length ?? 0;
+  const orbState = voiceStatus === "speaking" ? "speaking" : busy ? "thinking" : "idle";
+  const voiceIsPrimary = status?.realtime.available ?? false;
 
   return (
     <main className="core-glow relative h-dvh w-full overflow-hidden">
       {/* The Eden Core */}
-      <EdenOrb state={busy ? "thinking" : "idle"} />
+      <EdenOrb state={orbState} />
 
-      {/* Off-screen player for spoken replies */}
+      {/* Off-screen player for spoken replies (legacy text-chat fallback) */}
       <audio ref={audioRef} className="hidden" />
-
-      <RealtimeVoice available={status?.realtime.available ?? false} />
 
       <TopBar
         provider={status?.ai.provider ?? "…"}
@@ -342,24 +345,32 @@ export default function EdenShell() {
         </div>
       </div>
 
-      {/* Bottom — approvals, Eden's reply + command bar */}
+      {/* Bottom — approvals, then either voice (primary) or typed chat (fallback) */}
       <div className="absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl px-5 pb-6 sm:pb-8">
         <ApprovalsBar approvals={approvals} onResolve={resolveApproval} resolvingId={resolvingId} />
-        {(reply || busy) && (
-          <div className="hud-panel mb-3 max-h-56 overflow-y-auto px-5 py-4">
-            {reply ? (
-              <p className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-ink/95">
-                {reply}
-                {busy && (
-                  <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse align-middle bg-ink/60" />
+
+        {voiceIsPrimary ? (
+          <RealtimeVoice available muted={muted} onStatusChange={setVoiceStatus} />
+        ) : (
+          <>
+            {(reply || busy) && (
+              <div className="hud-panel mb-3 max-h-56 overflow-y-auto px-5 py-4">
+                {reply ? (
+                  <p className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-ink/95">
+                    {reply}
+                    {busy && (
+                      <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse align-middle bg-ink/60" />
+                    )}
+                  </p>
+                ) : (
+                  <p className="font-hud text-[12px] tracking-widest text-dim">EDEN IS THINKING…</p>
                 )}
-              </p>
-            ) : (
-              <p className="font-hud text-[12px] tracking-widest text-dim">EDEN IS THINKING…</p>
+              </div>
             )}
-          </div>
+            <CommandBar onSubmit={sendIntent} busy={busy} />
+          </>
         )}
-        <CommandBar onSubmit={sendIntent} busy={busy} />
+
         <p className="mt-2.5 text-center font-hud text-[10px] tracking-[0.25em] text-dim/60">
           HUMAN INTENTION IN · COMPLETED OUTCOMES OUT
         </p>
