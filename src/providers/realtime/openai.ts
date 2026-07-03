@@ -37,7 +37,17 @@ export class OpenAIRealtimeProvider implements RealtimeProvider {
           type: "realtime",
           model,
           instructions: sessionConfig.instructions,
-          audio: { output: { voice } },
+          audio: {
+            input: {
+              // Plain volume-based detection (the default) treats any loud
+              // enough sound as "the user started talking" and interrupts
+              // Eden — background noise included. semantic_vad judges
+              // whether the audio actually sounds like someone trying to
+              // say something, which is what stops false interruptions.
+              turn_detection: { type: "semantic_vad" },
+            },
+            output: { voice },
+          },
         },
       }),
     });
