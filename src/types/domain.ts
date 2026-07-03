@@ -137,6 +137,9 @@ export interface CapabilityManifest {
   authorities: Authority[];
   /** JSON Schema of arguments. Present + handler present = this manifest is a callable tool. */
   parameters?: Record<string, unknown>;
-  /** What actually runs when this tool is called. */
-  handler?: (args: Record<string, unknown>) => Promise<string>;
+  /** What actually runs when this tool is called. Receives the pre-authorization bypass when resuming an approved call. */
+  handler?: (
+    args: Record<string, unknown>,
+    opts?: { approvalId?: string }
+  ) => Promise<string>;
 }
