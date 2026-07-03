@@ -30,7 +30,11 @@ export class ConversationEngine implements Engine {
     this.ctx = ctx;
   }
 
-  private systemPrompt(memories: Memory[], searchResults?: SearchHit[]): string {
+  private systemPrompt(
+    memories: Memory[],
+    searchResults?: SearchHit[],
+    emailActionResult?: string
+  ): string {
     const title = config.identity.userTitle;
     const owner = config.identity.ownerName || "the user";
     const locationLine = config.identity.ownerLocation
@@ -48,14 +52,19 @@ export class ConversationEngine implements Engine {
             .map((r) => `- ${r.title}: ${r.snippet} (${r.url})`)
             .join("\n")}`
         : "";
+    const emailBlock = emailActionResult
+      ? `\n\nEmail action just taken on the user's behalf: ${emailActionResult} Report this outcome to the user naturally, in your own words — don't claim anything beyond what's stated here, and don't say you can't send emails since you just attempted to.`
+      : "";
 
     return [
       `You are Eden, a personal AI operating system built for ${owner}.`,
       `Address the user as "${title}" — composed, precise, quietly capable. Think JARVIS, not a chatbot.`,
       `Be concise. Prefer plain English. When asked to do something Eden cannot yet do, say so honestly and describe what capability would need to be connected.`,
+      `You CAN send email on the user's behalf when given a recipient's email address, a subject, and what should be said — sending still requires the user's approval, which appears as a card in the interface for them to tap. If they want to email someone but haven't given an actual email address, ask for it rather than guessing one.`,
       locationLine,
       memoryBlock,
       searchBlock,
+      emailBlock,
     ].join("\n");
   }
 
@@ -92,15 +101,70 @@ export class ConversationEngine implements Engine {
   }
 
   /**
+   * Cheap, reliable trigger: does this message actually contain an email
+   * address AND mention email/mail? Both together are a strong signal —
+   * real email addresses almost never show up in messages that aren't
+   * about sending mail. No AI call needed just to decide this.
+   */
+  private looksLikeEmailRequest(text: string): boolean {
+    const hasEmailAddress = /[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+/.test(text);
+    const mentionsEmail = /\b(email|e-mail|mail)\b/i.test(text);
+    return hasEmailAddress && mentionsEmail;
+  }
+
+  /**
+   * Only called once looksLikeEmailRequest is true. Asks the AI to turn
+   * the request into a proper subject and body — the recipient address
+   * must be lifted verbatim from the message, never invented.
+   */
+  private async extractEmailIntent(
+    text: string
+  ): Promise<{ to: string; subject: string; body: string } | null> {
+    try {
+      const response = await this.ctx.providers.ai.chat({
+        system: [
+          "Extract the email the user wants sent, from their message.",
+          'Respond with ONLY strict JSON, no prose, no markdown fences: {"to": "...", "subject": "...", "body": "..."}',
+          'Use the exact email address as it literally appears in the message for "to" — never invent or guess one.',
+          "Write a short, appropriate subject line and a clear, well-written body reflecting what the user wants said.",
+          'If no real email address appears anywhere in the message, respond with exactly: {"to": null}',
+        ].join(" "),
+        messages: [{ role: "user", content: text }],
+        maxTokens: 400,
+        temperature: 0.3,
+        json: true,
+      });
+      const clean = response.text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      if (!parsed?.to || typeof parsed.to !== "string") return null;
+      return {
+        to: parsed.to,
+        subject:
+          typeof parsed.subject === "string" && parsed.subject ? parsed.subject : "Message from Eden",
+        body: typeof parsed.body === "string" ? parsed.body : "",
+      };
+    } catch {
+      return null; // malformed or offline — the normal reply proceeds without it
+    }
+  }
+
+  /**
    * Everything that has to happen before Eden can even start replying:
    * make sure a conversation exists, persist the user's message, recall
-   * memories, assemble history, and search the web if the question needs
-   * it. Shared by both the streaming and non-streaming entry points.
+   * memories, assemble history, search the web if needed, and act on an
+   * email request if one was made. Shared by both the streaming and
+   * non-streaming entry points.
    */
   private async prepareTurn(
     text: string,
     conversationId?: string | null
-  ): Promise<{ convoId: string; aiMessages: AIMessage[]; memories: Memory[]; searchResults?: SearchHit[] }> {
+  ): Promise<{
+    convoId: string;
+    aiMessages: AIMessage[];
+    memories: Memory[];
+    searchResults?: SearchHit[];
+    emailActionResult?: string;
+  }> {
     const { bus, providers } = this.ctx;
     const db = providers.database;
 
@@ -141,7 +205,15 @@ export class ConversationEngine implements Engine {
       }
     }
 
-    return { convoId, aiMessages, memories, searchResults };
+    let emailActionResult: string | undefined;
+    if (this.looksLikeEmailRequest(text)) {
+      const intent = await this.extractEmailIntent(text);
+      if (intent) {
+        emailActionResult = await this.ctx.sendEmail(intent.to, intent.subject, intent.body);
+      }
+    }
+
+    return { convoId, aiMessages, memories, searchResults, emailActionResult };
   }
 
   /**
@@ -187,17 +259,15 @@ export class ConversationEngine implements Engine {
     conversationId?: string | null
   ): Promise<{ conversationId: string; reply: Message }> {
     const { bus, providers } = this.ctx;
-    const { convoId, aiMessages, memories, searchResults } = await this.prepareTurn(
-      text,
-      conversationId
-    );
+    const { convoId, aiMessages, memories, searchResults, emailActionResult } =
+      await this.prepareTurn(text, conversationId);
 
     let replyText: string;
     let provider = providers.ai.id;
     let model = providers.ai.defaultModel;
     try {
       const response = await providers.ai.chat({
-        system: this.systemPrompt(memories, searchResults),
+        system: this.systemPrompt(memories, searchResults, emailActionResult),
         messages: aiMessages,
         maxTokens: 1024,
       });
@@ -226,10 +296,8 @@ export class ConversationEngine implements Engine {
     conversationId?: string | null
   ): AsyncGenerator<ConversationStreamEvent> {
     const { bus, providers } = this.ctx;
-    const { convoId, aiMessages, memories, searchResults } = await this.prepareTurn(
-      text,
-      conversationId
-    );
+    const { convoId, aiMessages, memories, searchResults, emailActionResult } =
+      await this.prepareTurn(text, conversationId);
 
     yield { type: "conversationId", conversationId: convoId };
 
@@ -238,7 +306,7 @@ export class ConversationEngine implements Engine {
     const model = providers.ai.defaultModel;
     try {
       for await (const chunk of providers.ai.chatStream({
-        system: this.systemPrompt(memories, searchResults),
+        system: this.systemPrompt(memories, searchResults, emailActionResult),
         messages: aiMessages,
         maxTokens: 1024,
       })) {
