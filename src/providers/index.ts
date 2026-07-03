@@ -2,7 +2,7 @@ import { createAIProvider, type AIProvider } from "./ai";
 import { createDatabaseProvider, type DatabaseProvider } from "./database";
 import { createVoiceProvider, type VoiceProvider } from "./voice";
 import type { MapsProvider } from "./maps/types";
-import type { EmailProvider } from "./email/types";
+import { createEmailProvider, type EmailProvider } from "./email";
 import type { CalendarProvider } from "./calendar/types";
 import type { StorageProvider } from "./storage/types";
 import type { DeploymentProvider } from "./deployment/types";
@@ -40,7 +40,7 @@ export function createProviders(): ProviderRegistry {
     database: createDatabaseProvider(),
     voice: createVoiceProvider(),
     maps: null,
-    email: null,
+    email: createEmailProvider(),
     calendar: null,
     storage: null,
     deployment: null,
