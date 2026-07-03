@@ -244,13 +244,23 @@ export class SupabaseDatabaseProvider implements DatabaseProvider {
       if (error) throw error;
       return data as Approval;
     },
-    pending: async (): Promise<Approval[]> => {
+  pending: async (): Promise<Approval[]> => {
       const { data } = await this.client
         .from("approvals")
         .select()
         .eq("status", "pending")
         .order("created_at", { ascending: false });
       return (data ?? []) as Approval[];
+    },
+    resolve: async (id: string, status: "approved" | "denied"): Promise<Approval> => {
+      const { data, error } = await this.client
+        .from("approvals")
+        .update({ status, resolved_at: new Date().toISOString() })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data as Approval;
     },
   };
 }
