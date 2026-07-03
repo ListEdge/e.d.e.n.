@@ -7,10 +7,11 @@ import * as THREE from "three";
  * The Eden Core — a living wireframe orb.
  * A displaced sphere rendered as a fine grid, blue fading to magenta,
  * ringed by a halo of drifting particles. When Eden is thinking, the
- * surface agitates and brightens; at rest it breathes slowly.
+ * surface agitates and brightens; while speaking, it pulses rhythmically;
+ * at rest it breathes slowly.
  */
 
-type OrbState = "idle" | "thinking";
+type OrbState = "idle" | "thinking" | "speaking";
 
 const VERT = `
 uniform float uTime;
@@ -210,22 +211,30 @@ export default function EdenOrb({ state = "idle" }: { state?: OrbState }) {
     // ── Animation ─────────────────────────────────────────────
     const clock = new THREE.Clock();
     let frame = 0;
+    let smoothedAmp = 0.2;
+    let smoothedGlow = 1.0;
     const animate = () => {
       frame = requestAnimationFrame(animate);
       const t = clock.getElapsedTime();
-      const thinking = stateRef.current === "thinking";
+      const orbState = stateRef.current;
+      const thinking = orbState === "thinking";
+      const speaking = orbState === "speaking";
 
-      material.uniforms.uTime.value = reducedMotion ? 0 : t * (thinking ? 2.1 : 1);
-      material.uniforms.uAmp.value = THREE.MathUtils.lerp(
-        material.uniforms.uAmp.value,
-        thinking ? 0.3 : 0.2,
-        0.04
-      );
-      material.uniforms.uGlow.value = THREE.MathUtils.lerp(
-        material.uniforms.uGlow.value,
-        thinking ? 1.35 : 1.0,
-        0.04
-      );
+      material.uniforms.uTime.value = reducedMotion ? 0 : t * (thinking ? 2.1 : speaking ? 1.4 : 1);
+
+      // Smoothed baseline — transitions gently between states so switching
+      // in and out of "speaking" never jumps abruptly.
+      const baseAmpTarget = speaking ? 0.22 : thinking ? 0.3 : 0.2;
+      const baseGlowTarget = speaking ? 1.15 : thinking ? 1.35 : 1.0;
+      smoothedAmp = THREE.MathUtils.lerp(smoothedAmp, baseAmpTarget, 0.04);
+      smoothedGlow = THREE.MathUtils.lerp(smoothedGlow, baseGlowTarget, 0.04);
+
+      // A real rhythmic pulse while speaking, applied on top of the smoothed
+      // baseline rather than lerped itself — lerping a fast oscillation
+      // would smooth it away into almost nothing.
+      const pulse = speaking && !reducedMotion ? 0.5 + 0.5 * Math.sin(t * 9.0) : 0;
+      material.uniforms.uAmp.value = smoothedAmp + pulse * 0.14;
+      material.uniforms.uGlow.value = smoothedGlow + pulse * 0.35;
 
       if (!reducedMotion) {
         group.rotation.y = t * 0.06;
