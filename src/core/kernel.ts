@@ -97,6 +97,9 @@ async function boot(): Promise<Kernel> {
     providers,
     authorize: (action, authority, payload) => permissions.authorize(action, authority, payload),
     sendEmail: (to, subject, body) => communications.sendEmail(to, subject, body),
+    registerTool: (manifest) => capabilities.register(manifest),
+    listCallableTools: () => capabilities.listCallable(),
+    callTool: (name, args) => capabilities.callTool(name, args),
   };
   for (const engine of engines) {
     await engine.start(ctx);
