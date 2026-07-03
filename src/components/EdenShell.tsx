@@ -25,9 +25,6 @@ interface SystemStatus {
 
 const MUTE_STORAGE_KEY = "eden_voice_muted";
 
-/** Finds complete sentences at the start of `text`. Returns each sentence
- *  (including its trailing punctuation/space) plus whatever's left over
- *  and not yet terminated by ./!/? */
 function extractCompleteSentences(text: string): { sentences: string[]; rest: string } {
   const matches = text.match(/[^.!?]*[.!?]+(\s+|$)/g);
   if (!matches) return { sentences: [], rest: text };
@@ -43,19 +40,14 @@ export default function EdenShell() {
   const [reply, setReply] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState
-    "idle" | "connecting" | "listening" | "speaking" | "error"
-  >("idle");
+  const [voiceStatus, setVoiceStatus] = useState("idle" as "idle" | "connecting" | "listening" | "speaking" | "error");
   const conversationId = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Generation counter: invalidates stale speech loops when a new message
-  // is sent or voice is muted mid-reply.
   const speechGen = useRef(0);
   const speechQueueRef = useRef<Promise<string | null>[]>([]);
   const playerRunningRef = useRef(false);
 
-  // Restore the mute preference once, on first mount, client-side only.
   useEffect(() => {
     try {
       setMuted(localStorage.getItem(MUTE_STORAGE_KEY) === "true");
@@ -125,8 +117,6 @@ export default function EdenShell() {
     });
   }, []);
 
-  /** Fetches one sentence's audio clip. Never throws — a failed clip is
-   *  just skipped rather than stalling the rest of the reply. */
   const fetchClip = useCallback(async (text: string, gen: number): Promise<string | null> => {
     try {
       const res = await fetch("/api/voice/speak", {
@@ -136,15 +126,13 @@ export default function EdenShell() {
       });
       if (!res.ok) return null;
       const blob = await res.blob();
-      if (speechGen.current !== gen) return null; // superseded while downloading
+      if (speechGen.current !== gen) return null;
       return URL.createObjectURL(blob);
     } catch {
       return null;
     }
   }, []);
 
-  /** Plays whatever's in the speech queue, in order, gaplessly. Only one
-   *  loop ever runs at a time; enqueueSentence starts it if it's idle. */
   const runPlayerLoop = useCallback(async (gen: number) => {
     if (playerRunningRef.current) return;
     playerRunningRef.current = true;
@@ -187,9 +175,6 @@ export default function EdenShell() {
   const resolveApproval = useCallback(
     async (approvalId: string, decision: "approved" | "denied") => {
       setResolvingId(approvalId);
-      // Cut off anything still playing and start a fresh speech lane, same
-      // as sending a new message — this result deserves to be heard, not
-      // silently overwritten by leftover audio from an earlier turn.
       const gen = ++speechGen.current;
       speechQueueRef.current = [];
       audioRef.current?.pause();
@@ -220,7 +205,6 @@ export default function EdenShell() {
 
   const sendIntent = useCallback(
     async (text: string) => {
-      // Cut off anything still playing from the previous turn.
       const gen = ++speechGen.current;
       speechQueueRef.current = [];
       audioRef.current?.pause();
@@ -311,10 +295,8 @@ export default function EdenShell() {
 
   return (
     <main className="core-glow relative h-dvh w-full overflow-hidden">
-      {/* The Eden Core */}
       <EdenOrb state={orbState} />
 
-      {/* Off-screen player for spoken replies (legacy text-chat fallback) */}
       <audio ref={audioRef} className="hidden" />
 
       <TopBar
@@ -326,12 +308,10 @@ export default function EdenShell() {
         onToggleMute={toggleMute}
       />
 
-      {/* Left rail — engines */}
       <div className="pointer-events-none absolute inset-y-0 left-5 z-10 hidden items-center lg:flex xl:left-8">
         <SystemPanel engines={status?.engines ?? []} />
       </div>
 
-      {/* Right rail — context + event stream */}
       <div className="pointer-events-none absolute inset-y-0 right-5 z-10 hidden w-64 flex-col justify-center gap-3 lg:flex xl:right-8">
         <ContextPanel
           presence={status?.presence ?? "unknown"}
@@ -345,7 +325,6 @@ export default function EdenShell() {
         </div>
       </div>
 
-      {/* Bottom — approvals, then either voice (primary) or typed chat (fallback) */}
       <div className="absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl px-5 pb-6 sm:pb-8">
         <ApprovalsBar approvals={approvals} onResolve={resolveApproval} resolvingId={resolvingId} />
 
