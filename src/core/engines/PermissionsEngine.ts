@@ -1,5 +1,5 @@
 import type { Engine, EngineContext } from "../engine";
-import type { Authority } from "@/types/domain";
+import type { Approval, Authority } from "@/types/domain";
 
 /**
  * Permissions Engine — every action in Eden carries an authority level.
@@ -46,5 +46,22 @@ export class PermissionsEngine implements Engine {
       authority,
     });
     return { allowed: false, pendingApprovalId: approval.id };
+  }
+
+  /** Everything currently waiting on a human decision. */
+  async pending(): Promise<Approval[]> {
+    return this.ctx.providers.database.approvals.pending();
+  }
+
+  /** Records the person's decision. Does not itself carry out the
+   *  underlying action — that's the caller's job once it sees "approved". */
+  async resolve(approvalId: string, decision: "approved" | "denied"): Promise<Approval> {
+    const approval = await this.ctx.providers.database.approvals.resolve(approvalId, decision);
+    await this.ctx.bus.publish("ApprovalResolved", this.id, {
+      approvalId,
+      decision,
+      action: approval.action,
+    });
+    return approval;
   }
 }
