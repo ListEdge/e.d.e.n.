@@ -10,8 +10,63 @@ export class CommunicationsEngine implements Engine {
   readonly name = "Communications Engine";
   private ctx!: EngineContext;
 
-  start(ctx: EngineContext): void {
+  async start(ctx: EngineContext): Promise<void> {
     this.ctx = ctx;
+
+    // Registers send_email in the shared tool registry, so anything that
+    // can call a tool by name — the realtime voice relay, and eventually
+    // typed conversation's own tool loop — can trigger it the same way.
+    // This doesn't replace direct calls to sendEmail() below; both paths
+    // end up at the same method, so approval gating behaves identically
+    // no matter which door it came in through.
+    await ctx.registerTool({
+      id: "send_email",
+      name: "Send Email",
+      description: "Sends an email on the user's behalf. Requires the exact recipient email address.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["communicate"],
+      parameters: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "Recipient's email address" },
+          subject: { type: "string", description: "Email subject line" },
+          body: { type: "string", description: "Email body text" },
+        },
+        required: ["to", "subject", "body"],
+      },
+      handler: async (args, opts) => {
+        const { to, subject, body } = args as { to?: string; subject?: string; body?: string };
+        if (!to || !subject || body === undefined) {
+          return "Missing required email details (to, subject, body).";
+        }
+        return this.sendEmail(to, subject, body, opts);
+      },
+    });
+
+    await ctx.registerTool({
+      id: "place_call",
+      name: "Place Call",
+      description: "Places a phone call on the user's behalf to deliver a message.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["communicate"],
+      parameters: {
+        type: "object",
+        properties: {
+          number: { type: "string", description: "Phone number to call, in international format" },
+          purpose: { type: "string", description: "What Eden should say or accomplish on the call" },
+        },
+        required: ["number", "purpose"],
+      },
+      handler: async (args, opts) => {
+        const { number, purpose } = args as { number?: string; purpose?: string };
+        if (!number || !purpose) {
+          return "Missing required call details (number, purpose).";
+        }
+        return this.placeCall(number, purpose, opts);
+      },
+    });
   }
 
   /**
