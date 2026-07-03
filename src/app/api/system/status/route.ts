@@ -21,6 +21,9 @@ export async function GET() {
     voice: {
       available: Boolean(kernel.providers.voice?.available()),
     },
+    realtime: {
+      available: Boolean(kernel.providers.realtime?.available()),
+    },
     engines: kernel.engines.map((e) => ({ id: e.id, name: e.name, online: true })),
     capabilities: kernel.capabilities.list(),
     presence: kernel.presence.current(),
