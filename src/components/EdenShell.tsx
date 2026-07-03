@@ -22,6 +22,16 @@ interface SystemStatus {
 
 const MUTE_STORAGE_KEY = "eden_voice_muted";
 
+/** Finds complete sentences at the start of `text`. Returns each sentence
+ *  (including its trailing punctuation/space) plus whatever's left over
+ *  and not yet terminated by ./!/? */
+function extractCompleteSentences(text: string): { sentences: string[]; rest: string } {
+  const matches = text.match(/[^.!?]*[.!?]+(\s+|$)/g);
+  if (!matches) return { sentences: [], rest: text };
+  const consumed = matches.join("");
+  return { sentences: matches.map((s) => s.trim()).filter(Boolean), rest: text.slice(consumed.length) };
+}
+
 export default function EdenShell() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [events, setEvents] = useState<StreamEvent[]>([]);
@@ -30,7 +40,12 @@ export default function EdenShell() {
   const [muted, setMuted] = useState(false);
   const conversationId = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Generation counter: invalidates stale speech loops when a new message
+  // is sent or voice is muted mid-reply.
   const speechGen = useRef(0);
+  const speechQueueRef = useRef<Promise<string | null>[]>([]);
+  const playerRunningRef = useRef(false);
 
   // Restore the mute preference once, on first mount, client-side only.
   useEffect(() => {
@@ -78,62 +93,47 @@ export default function EdenShell() {
         /* ignore — preference just won't persist */
       }
       if (next) {
-        speechGen.current += 1; // stop any in-flight speaking loop
+        speechGen.current += 1;
+        speechQueueRef.current = [];
         audioRef.current?.pause();
       }
       return next;
     });
   }, []);
 
-  /**
-   * Splits a reply into speakable sentences so they can be synthesized in
-   * parallel. Tiny leftover fragments (e.g. after "Mr.") get folded into
-   * the previous chunk rather than spoken as their own clip.
-   */
-  const splitIntoSentences = (text: string): string[] => {
-    const matches = text.match(/[^.!?]+[.!?]+(\s+|$)/g);
-    const parts = (matches ?? [text]).map((s) => s.trim()).filter(Boolean);
-    const merged: string[] = [];
-    for (const part of parts) {
-      if (merged.length > 0 && part.length < 8) {
-        merged[merged.length - 1] += " " + part;
-      } else {
-        merged.push(part);
-      }
+  /** Fetches one sentence's audio clip. Never throws — a failed clip is
+   *  just skipped rather than stalling the rest of the reply. */
+  const fetchClip = useCallback(async (text: string, gen: number): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/voice/speak", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      if (speechGen.current !== gen) return null; // superseded while downloading
+      return URL.createObjectURL(blob);
+    } catch {
+      return null;
     }
-    return merged.length > 0 ? merged : [text];
-  };
+  }, []);
 
-  const speak = useCallback(
-    async (text: string) => {
-      if (muted || !status?.voice.available || !audioRef.current) return;
+  /** Plays whatever's in the speech queue, in order, gaplessly. Only one
+   *  loop ever runs at a time; enqueueSentence starts it if it's idle. */
+  const runPlayerLoop = useCallback(async (gen: number) => {
+    if (playerRunningRef.current) return;
+    playerRunningRef.current = true;
+    try {
       const audio = audioRef.current;
-      const myGen = ++speechGen.current;
-
-      const chunks = splitIntoSentences(text);
-
-      // Fire every sentence's TTS request at once. This is what actually
-      // buys the speed: sentence one is ready far sooner than the whole
-      // reply would have been, and by the time it finishes playing the
-      // next sentence is very likely ready too — so it sounds continuous.
-      const pending = chunks.map((chunk) =>
-        fetch("/api/voice/speak", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: chunk }),
-        })
-          .then((res) => (res.ok ? res.blob() : null))
-          .then((blob) => (blob ? URL.createObjectURL(blob) : null))
-          .catch(() => null)
-      );
-
-      for (const clip of pending) {
-        if (speechGen.current !== myGen) return; // a newer reply took over
+      while (speechQueueRef.current.length > 0) {
+        if (speechGen.current !== gen || !audio) return;
+        const clip = speechQueueRef.current.shift();
+        if (!clip) continue;
         const url = await clip;
-        if (!url) continue; // that sentence failed to synthesize — skip it, don't stall the rest
-        if (speechGen.current !== myGen) {
-          URL.revokeObjectURL(url);
-          return;
+        if (!url || speechGen.current !== gen) {
+          if (url) URL.revokeObjectURL(url);
+          continue;
         }
         audio.src = url;
         const finished = new Promise<void>((resolve) => {
@@ -146,30 +146,95 @@ export default function EdenShell() {
         await finished;
         URL.revokeObjectURL(url);
       }
+    } finally {
+      playerRunningRef.current = false;
+    }
+  }, []);
+
+  const enqueueSentence = useCallback(
+    (text: string, gen: number) => {
+      if (!text.trim() || muted || !status?.voice.available) return;
+      speechQueueRef.current.push(fetchClip(text, gen));
+      runPlayerLoop(gen);
     },
-    [muted, status?.voice.available]
+    [muted, status?.voice.available, fetchClip, runPlayerLoop]
   );
 
   const sendIntent = useCallback(
     async (text: string) => {
-      speechGen.current += 1; // cut off any speech still playing from the last reply
+      // Cut off anything still playing from the previous turn.
+      const gen = ++speechGen.current;
+      speechQueueRef.current = [];
       audioRef.current?.pause();
+
       setBusy(true);
       setReply(null);
+
+      let fullText = "";
+      let spokenUpTo = 0;
+
+      const speakReadySentences = (finalFlush: boolean) => {
+        const { sentences, rest } = extractCompleteSentences(fullText.slice(spokenUpTo));
+        for (const sentence of sentences) {
+          enqueueSentence(sentence, gen);
+        }
+        spokenUpTo = fullText.length - rest.length;
+        if (finalFlush && rest.trim()) {
+          enqueueSentence(rest.trim(), gen);
+          spokenUpTo = fullText.length;
+        }
+      };
+
       try {
         const res = await fetch("/api/conversation", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ message: text, conversationId: conversationId.current }),
         });
-        const data = await res.json();
-        if (res.ok) {
-          conversationId.current = data.conversationId;
-          setReply(data.reply);
-          speak(data.reply);
-        } else {
+
+        if (!res.ok || !res.body) {
+          const data = await res.json().catch(() => ({}) as { error?: string });
           setReply(`Something went wrong: ${data.error ?? "unknown error"}`);
+          return;
         }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let evt: { type: string; [key: string]: unknown };
+            try {
+              evt = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            if (evt.type === "conversationId") {
+              conversationId.current = evt.conversationId as string;
+            } else if (evt.type === "delta") {
+              fullText += evt.text as string;
+              setReply(fullText);
+              speakReadySentences(false);
+            } else if (evt.type === "error") {
+              const message = (evt.error as string) || "Something went wrong.";
+              fullText = fullText || message;
+              setReply(fullText);
+            } else if (evt.type === "done") {
+              fullText = (evt.reply as string) ?? fullText;
+              setReply(fullText);
+            }
+          }
+        }
+
+        speakReadySentences(true);
       } catch {
         setReply("I couldn't reach my own core. Check the deployment logs.");
       } finally {
@@ -178,7 +243,7 @@ export default function EdenShell() {
         refreshStatus();
       }
     },
-    [refreshEvents, refreshStatus, speak]
+    [refreshEvents, refreshStatus, enqueueSentence]
   );
 
   const capsEnabled = status?.capabilities.filter((c) => c.enabled).length ?? 0;
@@ -223,12 +288,15 @@ export default function EdenShell() {
       <div className="absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl px-5 pb-6 sm:pb-8">
         {(reply || busy) && (
           <div className="hud-panel mb-3 max-h-56 overflow-y-auto px-5 py-4">
-            {busy ? (
-              <p className="font-hud text-[12px] tracking-widest text-dim">EDEN IS THINKING…</p>
-            ) : (
+            {reply ? (
               <p className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-ink/95">
                 {reply}
+                {busy && (
+                  <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse align-middle bg-ink/60" />
+                )}
               </p>
+            ) : (
+              <p className="font-hud text-[12px] tracking-widest text-dim">EDEN IS THINKING…</p>
             )}
           </div>
         )}
