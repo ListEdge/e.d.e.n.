@@ -1,6 +1,6 @@
 import { EventBus } from "./events/EventBus";
 import { createProviders, type ProviderRegistry } from "@/providers";
-import type { Engine } from "./engine";
+import type { Engine, EngineContext } from "./engine";
 import { ConversationEngine } from "./engines/ConversationEngine";
 import { MemoryEngine } from "./engines/MemoryEngine";
 import { KnowledgeEngine } from "./engines/KnowledgeEngine";
@@ -85,7 +85,11 @@ async function boot(): Promise<Kernel> {
     communications,
   ];
 
-  const ctx = { bus, providers };
+  const ctx: EngineContext = {
+    bus,
+    providers,
+    authorize: (action, authority, payload) => permissions.authorize(action, authority, payload),
+  };
   for (const engine of engines) {
     await engine.start(ctx);
     await bus.publish("EngineStarted", "kernel", { engine: engine.id });
