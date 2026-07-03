@@ -46,22 +46,41 @@ async function buildInstructions(): Promise<string> {
     .join("\n");
 }
 
+async function mintSession() {
+  const kernel = await getKernel();
+  const realtime = kernel.providers.realtime;
+  if (!realtime || !realtime.available()) {
+    return NextResponse.json(
+      { error: "Realtime voice is not connected. Add OPENAI_API_KEY to enable it." },
+      { status: 503 }
+    );
+  }
+
+  const instructions = await buildInstructions();
+  const session = await realtime.createSession({ instructions });
+  return NextResponse.json(session);
+}
+
+/**
+ * GET is here purely so this can be tested by pasting the URL into a
+ * browser address bar — no terminal needed. The real voice client built
+ * in a later phase calls this with POST, which does the exact same thing.
+ */
+export async function GET() {
+  try {
+    return await mintSession();
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Unknown error" },
+      { status: 500 }
+    );
+  }
+}
+
 /** POST /api/realtime/session — mints a short-lived token for a browser to open a voice session. */
 export async function POST() {
   try {
-    const kernel = await getKernel();
-    const realtime = kernel.providers.realtime;
-    if (!realtime || !realtime.available()) {
-      return NextResponse.json(
-        { error: "Realtime voice is not connected. Add OPENAI_API_KEY to enable it." },
-        { status: 503 }
-      );
-    }
-
-    const instructions = await buildInstructions();
-    const session = await realtime.createSession({ instructions });
-
-    return NextResponse.json(session);
+    return await mintSession();
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Unknown error" },
