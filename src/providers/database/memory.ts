@@ -169,5 +169,12 @@ export class InMemoryDatabaseProvider implements DatabaseProvider {
     },
     pending: async (): Promise<Approval[]> =>
       this.store.approvals.filter((a) => a.status === "pending"),
+    resolve: async (id: string, status: "approved" | "denied"): Promise<Approval> => {
+      const approval = this.store.approvals.find((a) => a.id === id);
+      if (!approval) throw new Error(`Approval ${id} not found`);
+      approval.status = status;
+      approval.resolved_at = new Date().toISOString();
+      return approval;
+    },
   };
 }
