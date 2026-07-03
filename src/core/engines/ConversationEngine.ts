@@ -33,7 +33,8 @@ export class ConversationEngine implements Engine {
   private systemPrompt(
     memories: Memory[],
     searchResults?: SearchHit[],
-    emailActionResult?: string
+    emailActionResult?: string,
+    emailAddressMissing?: boolean
   ): string {
     const title = config.identity.userTitle;
     const owner = config.identity.ownerName || "the user";
@@ -55,16 +56,21 @@ export class ConversationEngine implements Engine {
     const emailBlock = emailActionResult
       ? `\n\nEmail action just taken on the user's behalf: ${emailActionResult} Report this outcome to the user naturally, in your own words — don't claim anything beyond what's stated here, and don't say you can't send emails since you just attempted to.`
       : "";
+    const missingAddressBlock = emailAddressMissing
+      ? `\n\nThe user's message looks like a request to send an email, but Eden could not confirm a valid recipient address from it, so nothing was sent or attempted. Ask them to confirm the recipient's email address. Do not say or imply that an email was sent.`
+      : "";
 
     return [
       `You are Eden, a personal AI operating system built for ${owner}.`,
       `Address the user as "${title}" — composed, precise, quietly capable. Think JARVIS, not a chatbot.`,
       `Be concise. Prefer plain English. When asked to do something Eden cannot yet do, say so honestly and describe what capability would need to be connected.`,
       `You CAN send email on the user's behalf when given a recipient's email address, a subject, and what should be said — sending still requires the user's approval, which appears as a card in the interface for them to tap. If they want to email someone but haven't given an actual email address, ask for it rather than guessing one.`,
+      `Never say or imply that you have sent an email, made a call, or completed any other action requiring approval unless this system prompt explicitly confirms it happened (look for a line starting "Email action just taken"). If no such confirmation appears below, you have not performed that action this turn — say so honestly rather than assuming or claiming success.`,
       locationLine,
       memoryBlock,
       searchBlock,
       emailBlock,
+      missingAddressBlock,
     ].join("\n");
   }
 
@@ -164,6 +170,7 @@ export class ConversationEngine implements Engine {
     memories: Memory[];
     searchResults?: SearchHit[];
     emailActionResult?: string;
+    emailAddressMissing?: boolean;
   }> {
     const { bus, providers } = this.ctx;
     const db = providers.database;
@@ -206,14 +213,17 @@ export class ConversationEngine implements Engine {
     }
 
     let emailActionResult: string | undefined;
+    let emailAddressMissing = false;
     if (this.looksLikeEmailRequest(text)) {
       const intent = await this.extractEmailIntent(text);
       if (intent) {
         emailActionResult = await this.ctx.sendEmail(intent.to, intent.subject, intent.body);
+      } else {
+        emailAddressMissing = true;
       }
     }
 
-    return { convoId, aiMessages, memories, searchResults, emailActionResult };
+    return { convoId, aiMessages, memories, searchResults, emailActionResult, emailAddressMissing };
   }
 
   /**
@@ -259,7 +269,7 @@ export class ConversationEngine implements Engine {
     conversationId?: string | null
   ): Promise<{ conversationId: string; reply: Message }> {
     const { bus, providers } = this.ctx;
-    const { convoId, aiMessages, memories, searchResults, emailActionResult } =
+    const { convoId, aiMessages, memories, searchResults, emailActionResult, emailAddressMissing } =
       await this.prepareTurn(text, conversationId);
 
     let replyText: string;
@@ -267,7 +277,7 @@ export class ConversationEngine implements Engine {
     let model = providers.ai.defaultModel;
     try {
       const response = await providers.ai.chat({
-        system: this.systemPrompt(memories, searchResults, emailActionResult),
+        system: this.systemPrompt(memories, searchResults, emailActionResult, emailAddressMissing),
         messages: aiMessages,
         maxTokens: 1024,
       });
@@ -296,7 +306,7 @@ export class ConversationEngine implements Engine {
     conversationId?: string | null
   ): AsyncGenerator<ConversationStreamEvent> {
     const { bus, providers } = this.ctx;
-    const { convoId, aiMessages, memories, searchResults, emailActionResult } =
+    const { convoId, aiMessages, memories, searchResults, emailActionResult, emailAddressMissing } =
       await this.prepareTurn(text, conversationId);
 
     yield { type: "conversationId", conversationId: convoId };
@@ -306,7 +316,7 @@ export class ConversationEngine implements Engine {
     const model = providers.ai.defaultModel;
     try {
       for await (const chunk of providers.ai.chatStream({
-        system: this.systemPrompt(memories, searchResults, emailActionResult),
+        system: this.systemPrompt(memories, searchResults, emailActionResult, emailAddressMissing),
         messages: aiMessages,
         maxTokens: 1024,
       })) {
