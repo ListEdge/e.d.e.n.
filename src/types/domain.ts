@@ -3,7 +3,7 @@
  * These are the nouns Eden thinks in. Everything else is plumbing.
  */
 
-export type Role = "user" | "assistant" | "system";
+export type Role = "user" | "assistant" | "system" | "tool";
 
 export interface Conversation {
   id: string;
@@ -18,6 +18,10 @@ export interface Message {
   content: string;
   provider?: string | null;
   model?: string | null;
+  /** Present on assistant messages that called a tool. */
+  tool_call?: { id: string; name: string; arguments: Record<string, unknown> } | null;
+  /** Present on tool-result messages — which call this result answers. */
+  tool_call_id?: string | null;
   created_at: string;
 }
 
@@ -131,4 +135,8 @@ export interface CapabilityManifest {
   version: string;
   enabled: boolean;
   authorities: Authority[];
+  /** JSON Schema of arguments. Present + handler present = this manifest is a callable tool. */
+  parameters?: Record<string, unknown>;
+  /** What actually runs when this tool is called. */
+  handler?: (args: Record<string, unknown>) => Promise<string>;
 }
