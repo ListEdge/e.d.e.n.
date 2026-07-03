@@ -30,4 +30,6 @@ export interface AIProvider {
   readonly defaultModel: string;
   available(): boolean;
   chat(request: AIChatRequest): Promise<AIChatResponse>;
+  /** Yields plain text deltas as the model generates them. */
+  chatStream(request: AIChatRequest): AsyncGenerator<string>;
 }
