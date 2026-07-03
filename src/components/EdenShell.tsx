@@ -8,11 +8,13 @@ import ContextPanel from "./hud/ContextPanel";
 import EventStream, { type StreamEvent } from "./hud/EventStream";
 import CommandBar from "./hud/CommandBar";
 import ApprovalsBar, { type PendingApproval } from "./hud/ApprovalsBar";
+import RealtimeVoice from "./hud/RealtimeVoice";
 
 interface SystemStatus {
   ai: { provider: string; model: string; online: boolean };
   database: { provider: string; persistent: boolean };
   voice: { available: boolean };
+  realtime: { available: boolean };
   engines: EngineStatus[];
   capabilities: Array<{ id: string; enabled: boolean }>;
   presence: string;
