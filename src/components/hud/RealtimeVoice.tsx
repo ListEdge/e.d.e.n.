@@ -5,12 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type RealtimeStatus = "idle" | "connecting" | "listening" | "speaking" | "error";
 
 /**
- * Real-time voice-to-voice. Connects the browser directly to OpenAI over
- * WebRTC — audio never touches Eden's own server, which is the entire
- * reason this feels fast. Eden's server is only involved for: minting the
- * session token (/api/realtime/session), running any tool call the model
- * requests (/api/realtime/tool-call), and saving transcripts
- * (/api/realtime/transcript).
+ * Real-time voice-to-voice — Eden's primary interface. Connects the
+ * browser directly to OpenAI over WebRTC — audio never touches Eden's
+ * own server, which is the entire reason this feels fast. Eden's server
+ * is only involved for: minting the session token (/api/realtime/session),
+ * running any tool call the model requests (/api/realtime/tool-call), and
+ * saving transcripts (/api/realtime/transcript).
  *
  * IMPORTANT — read this before assuming something's broken:
  * The exact event names OpenAI's GA Realtime API uses for tool calls and
@@ -23,8 +23,16 @@ type RealtimeStatus = "idle" | "connecting" | "listening" | "speaking" | "error"
  * doesn't behave right, that log shows the actual event type name OpenAI
  * sent, which is exactly what's needed to fix it precisely.
  */
-export default function RealtimeVoice({ available }: { available: boolean }) {
-  const [status, setStatus] = useState<RealtimeStatus>("idle");
+export default function RealtimeVoice({
+  available,
+  muted = false,
+  onStatusChange,
+}: {
+  available: boolean;
+  muted?: boolean;
+  onStatusChange?: (status: RealtimeStatus) => void;
+}) {
+  const [status, setStatusState] = useState<RealtimeStatus>("idle");
   const [expanded, setExpanded] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [eventLog, setEventLog] = useState<string[]>([]);
@@ -40,6 +48,20 @@ export default function RealtimeVoice({ available }: { available: boolean }) {
   const toolCallBuffers = useRef<Map<string, { name: string; args: string }>>(new Map());
   const transcriptBuffers = useRef<Map<string, string>>(new Map());
 
+  const setStatus = useCallback(
+    (next: RealtimeStatus) => {
+      setStatusState(next);
+      onStatusChange?.(next);
+    },
+    [onStatusChange]
+  );
+
+  // Keep the shared mute toggle meaningful for voice mode too — it has
+  // its own audio element, separate from the old text-reply player.
+  useEffect(() => {
+    if (audioElRef.current) audioElRef.current.muted = muted;
+  }, [muted]);
+
   const log = useCallback((line: string) => {
     setEventLog((prev) => [...prev.slice(-59), line]);
   }, []);
@@ -54,7 +76,7 @@ export default function RealtimeVoice({ available }: { available: boolean }) {
     toolCallBuffers.current.clear();
     transcriptBuffers.current.clear();
     setStatus("idle");
-  }, []);
+  }, [setStatus]);
 
   useEffect(() => disconnect, [disconnect]); // clean up if the page navigates away mid-call
 
@@ -188,7 +210,7 @@ export default function RealtimeVoice({ available }: { available: boolean }) {
 
       if (type === "error") log(`ERROR: ${JSON.stringify(event)}`);
     },
-    [log, relayToolCall, persistTranscript]
+    [log, relayToolCall, persistTranscript, setStatus]
   );
 
   const connect = useCallback(async () => {
@@ -211,6 +233,7 @@ export default function RealtimeVoice({ available }: { available: boolean }) {
 
       const audioEl = document.createElement("audio");
       audioEl.autoplay = true;
+      audioEl.muted = muted;
       audioElRef.current = audioEl;
       pc.ontrack = (e) => {
         audioEl.srcObject = e.streams[0];
@@ -263,30 +286,30 @@ export default function RealtimeVoice({ available }: { available: boolean }) {
       setErrorMessage(err instanceof Error ? err.message : "Couldn't start the voice session.");
       disconnect();
     }
-  }, [handleDataChannelMessage, log, disconnect]);
+  }, [handleDataChannelMessage, log, disconnect, muted, setStatus]);
 
   if (!available) return null;
 
   const statusLabel: Record<RealtimeStatus, string> = {
-    idle: "TALK",
+    idle: "TALK TO EDEN",
     connecting: "CONNECTING…",
-    listening: "LISTENING",
-    speaking: "EDEN SPEAKING",
-    error: "ERROR",
+    listening: "LISTENING…",
+    speaking: "EDEN IS SPEAKING",
+    error: "TRY AGAIN",
   };
 
   return (
-    <div className="pointer-events-auto fixed right-5 top-16 z-30 flex flex-col items-end gap-2 sm:right-8">
+    <div className="pointer-events-auto flex flex-col items-center gap-2.5">
       <button
         onClick={status === "idle" || status === "error" ? connect : disconnect}
-        className={`flex items-center gap-2 rounded-full px-4 py-2 font-hud text-[10px] tracking-[0.2em] transition-colors ${
+        className={`flex w-full items-center justify-center gap-3 rounded-full px-6 py-4 font-hud text-[12px] tracking-[0.25em] transition-colors ${
           status === "idle" || status === "error"
             ? "bg-pulseblue/20 text-pulseblue hover:bg-pulseblue/30"
             : "bg-pulsemagenta/20 text-pulsemagenta"
         }`}
       >
         <span
-          className={`h-1.5 w-1.5 rounded-full ${
+          className={`h-2 w-2 rounded-full ${
             status === "listening" || status === "speaking"
               ? "bg-pulsemagenta dot-online"
               : status === "connecting"
@@ -300,7 +323,7 @@ export default function RealtimeVoice({ available }: { available: boolean }) {
       </button>
 
       {expanded && (
-        <div className="hud-panel flex w-72 flex-col gap-2 px-3 py-3 sm:w-80">
+        <div className="hud-panel flex w-full flex-col gap-2 px-4 py-3">
           <div className="flex items-center justify-between">
             <span className="font-hud text-[10px] tracking-[0.2em] text-dim">VOICE SESSION</span>
             <button
