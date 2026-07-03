@@ -37,7 +37,11 @@ export interface EngineContext {
   /** Every tool currently registered and switched on. */
   listCallableTools(): CapabilityManifest[];
   /** Runs a registered tool by name, authorizing its declared authorities first. */
-  callTool(name: string, args: Record<string, unknown>): Promise<string>;
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    opts?: { approvalId?: string }
+  ): Promise<string>;
 }
 
 export interface Engine {
