@@ -1,5 +1,6 @@
 import type { EventBus } from "./events/EventBus";
 import type { ProviderRegistry } from "@/providers";
+import type { Authority } from "@/types/domain";
 
 /**
  * Every part of Eden is an Engine with exactly one responsibility.
@@ -9,6 +10,18 @@ import type { ProviderRegistry } from "@/providers";
 export interface EngineContext {
   bus: EventBus;
   providers: ProviderRegistry;
+  /**
+   * Checks whether an action is allowed to proceed under Eden's authority
+   * policy. Low-risk authorities resolve immediately; high-risk ones
+   * create a pending approval and return allowed: false until a person
+   * signs off. This is how an engine consults the Permissions Engine
+   * without importing it — the kernel wires this to the real thing.
+   */
+  authorize(
+    action: string,
+    authority: Authority,
+    payload?: Record<string, unknown>
+  ): Promise<{ allowed: boolean; pendingApprovalId?: string }>;
 }
 
 export interface Engine {
