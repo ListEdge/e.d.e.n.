@@ -1,6 +1,7 @@
 import { EventBus } from "./events/EventBus";
 import { createProviders, type ProviderRegistry } from "@/providers";
 import type { Engine, EngineContext } from "./engine";
+import type { Approval } from "@/types/domain";
 import { ConversationEngine } from "./engines/ConversationEngine";
 import { MemoryEngine } from "./engines/MemoryEngine";
 import { KnowledgeEngine } from "./engines/KnowledgeEngine";
@@ -41,6 +42,12 @@ export interface Kernel {
   analytics: AnalyticsEngine;
   voice: VoiceEngine;
   communications: CommunicationsEngine;
+  /**
+   * Carries out an approved action. This is the composition root's job,
+   * not any single engine's — it's the one place that knows how an
+   * approval's action name maps back to a real engine call.
+   */
+  resumeApproval(approval: Approval): Promise<string>;
   bootedAt: string;
 }
 
@@ -101,6 +108,37 @@ async function boot(): Promise<Kernel> {
     engines: engines.length,
   });
 
+  /**
+   * Maps an approved action back to the engine call it was blocking.
+   * Each case pulls trusted values from the approval's own stored
+   * payload — never from anything a client sends when resolving —
+   * and passes approvalId so the engine skips asking for approval again.
+   */
+  async function resumeApproval(approval: Approval): Promise<string> {
+    switch (approval.action) {
+      case "send_email": {
+        const { to, subject, body } = approval.payload as {
+          to?: string;
+          subject?: string;
+          body?: string;
+        };
+        if (!to || !subject || body === undefined) {
+          return "Approved, but the original email details were incomplete.";
+        }
+        return communications.sendEmail(to, subject, body, { approvalId: approval.id });
+      }
+      case "place_call": {
+        const { number, purpose } = approval.payload as { number?: string; purpose?: string };
+        if (!number || !purpose) {
+          return "Approved, but the original call details were incomplete.";
+        }
+        return communications.placeCall(number, purpose, { approvalId: approval.id });
+      }
+      default:
+        return `Approved, but Eden doesn't yet know how to carry out "${approval.action}".`;
+    }
+  }
+
   return {
     bus,
     providers,
@@ -119,6 +157,7 @@ async function boot(): Promise<Kernel> {
     analytics,
     voice,
     communications,
+    resumeApproval,
     bootedAt: new Date().toISOString(),
   };
 }
