@@ -330,7 +330,12 @@ export default function EdenShell() {
         <ApprovalsBar approvals={approvals} onResolve={resolveApproval} resolvingId={resolvingId} />
 
         {voiceIsPrimary ? (
-          <RealtimeVoice available muted={muted} onStatusChange={setVoiceStatus} />
+          <RealtimeVoice
+            available
+            muted={muted}
+            onStatusChange={setVoiceStatus}
+            audioLevelRef={voiceAudioLevelRef}
+          />
         ) : (
           <>
             {(reply || busy) && (
