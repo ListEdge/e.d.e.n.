@@ -7,8 +7,8 @@ import * as THREE from "three";
  * The Eden Core — a living wireframe orb.
  * A displaced sphere rendered as a fine grid, blue fading to magenta,
  * ringed by a halo of drifting particles. When Eden is thinking, the
- * surface agitates and brightens; while speaking, it pulses rhythmically;
- * at rest it breathes slowly.
+ * surface agitates and brightens; while speaking, it pulses with the
+ * actual audio level (not a fixed rhythm); at rest it breathes slowly.
  */
 
 type OrbState = "idle" | "thinking" | "speaking";
@@ -107,10 +107,27 @@ void main() {
 }
 `;
 
-export default function EdenOrb({ state = "idle" }: { state?: OrbState }) {
+export default function EdenOrb({
+  state = "idle",
+  audioLevelRef,
+  compact = false,
+}: {
+  state?: OrbState;
+  /** Written to continuously by whatever's playing audio (e.g. the voice
+   *  session) — a smoothed value here drives the pulse, so the orb moves
+   *  with the actual sound instead of a fixed, mechanical rhythm. */
+  audioLevelRef?: { current: number };
+  /** Shrinks the orb toward the top of the screen, leaving room below for
+   *  other content (dashboards) to occupy. Not driven by anything yet —
+   *  the transition is already smooth so a future feature can just flip
+   *  this prop. */
+  compact?: boolean;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<OrbState>(state);
   stateRef.current = state;
+  const audioLevelRefRef = useRef(audioLevelRef);
+  audioLevelRefRef.current = audioLevelRef;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -213,6 +230,7 @@ export default function EdenOrb({ state = "idle" }: { state?: OrbState }) {
     let frame = 0;
     let smoothedAmp = 0.2;
     let smoothedGlow = 1.0;
+    let smoothedAudioLevel = 0;
     const animate = () => {
       frame = requestAnimationFrame(animate);
       const t = clock.getElapsedTime();
@@ -220,21 +238,22 @@ export default function EdenOrb({ state = "idle" }: { state?: OrbState }) {
       const thinking = orbState === "thinking";
       const speaking = orbState === "speaking";
 
-      material.uniforms.uTime.value = reducedMotion ? 0 : t * (thinking ? 2.1 : speaking ? 1.4 : 1);
+      material.uniforms.uTime.value = reducedMotion ? 0 : t * (thinking ? 2.1 : speaking ? 1.15 : 1);
 
       // Smoothed baseline — transitions gently between states so switching
       // in and out of "speaking" never jumps abruptly.
       const baseAmpTarget = speaking ? 0.22 : thinking ? 0.3 : 0.2;
-      const baseGlowTarget = speaking ? 1.15 : thinking ? 1.35 : 1.0;
+      const baseGlowTarget = speaking ? 1.1 : thinking ? 1.35 : 1.0;
       smoothedAmp = THREE.MathUtils.lerp(smoothedAmp, baseAmpTarget, 0.04);
       smoothedGlow = THREE.MathUtils.lerp(smoothedGlow, baseGlowTarget, 0.04);
 
-      // A real rhythmic pulse while speaking, applied on top of the smoothed
-      // baseline rather than lerped itself — lerping a fast oscillation
-      // would smooth it away into almost nothing.
-      const pulse = speaking && !reducedMotion ? 0.5 + 0.5 * Math.sin(t * 9.0) : 0;
-      material.uniforms.uAmp.value = smoothedAmp + pulse * 0.14;
-      material.uniforms.uGlow.value = smoothedGlow + pulse * 0.35;
+      // The actual pulse: real audio level, heavily smoothed. This is what
+      // makes it move like Siri or ChatGPT's voice indicator rather than a
+      // metronome — real speech is irregular, so the pulse should be too.
+      const rawLevel = speaking ? (audioLevelRefRef.current?.current ?? 0) : 0;
+      smoothedAudioLevel = THREE.MathUtils.lerp(smoothedAudioLevel, rawLevel, reducedMotion ? 1 : 0.16);
+      material.uniforms.uAmp.value = smoothedAmp + smoothedAudioLevel * 0.28;
+      material.uniforms.uGlow.value = smoothedGlow + smoothedAudioLevel * 0.7;
 
       if (!reducedMotion) {
         group.rotation.y = t * 0.06;
@@ -261,5 +280,13 @@ export default function EdenOrb({ state = "idle" }: { state?: OrbState }) {
     };
   }, []);
 
-  return <div ref={containerRef} className="absolute inset-0" aria-hidden="true" />;
+  return (
+    <div
+      ref={containerRef}
+      className={`absolute inset-x-0 top-0 transition-[height] duration-700 ease-in-out ${
+        compact ? "h-[38%] sm:h-[42%]" : "h-[62%] sm:h-[66%]"
+      }`}
+      aria-hidden="true"
+    />
+  );
 }
