@@ -17,6 +17,10 @@ export const config = {
   search: {
     tavilyKey: process.env.TAVILY_API_KEY ?? "",
   },
+  email: {
+    resendKey: process.env.RESEND_API_KEY ?? "",
+    from: process.env.EDEN_EMAIL_FROM ?? "",
+  },
   identity: {
     userTitle: process.env.EDEN_USER_TITLE ?? "Sir",
     ownerName: process.env.EDEN_OWNER_NAME ?? "",
