@@ -21,6 +21,9 @@ export class ConversationEngine implements Engine {
   private systemPrompt(memories: Memory[], searchResults?: SearchHit[]): string {
     const title = config.identity.userTitle;
     const owner = config.identity.ownerName || "the user";
+    const locationLine = config.identity.ownerLocation
+      ? `The user is based in ${config.identity.ownerLocation}. Use this for weather, local, or "near me" questions unless they name another place.`
+      : "";
     const memoryBlock =
       memories.length > 0
         ? `\n\nRelevant things you remember:\n${memories
@@ -38,6 +41,7 @@ export class ConversationEngine implements Engine {
       `You are Eden, a personal AI operating system built for ${owner}.`,
       `Address the user as "${title}" — composed, precise, quietly capable. Think JARVIS, not a chatbot.`,
       `Be concise. Prefer plain English. When asked to do something Eden cannot yet do, say so honestly and describe what capability would need to be connected.`,
+      locationLine,
       memoryBlock,
       searchBlock,
     ].join("\n");
@@ -54,6 +58,25 @@ export class ConversationEngine implements Engine {
       /\b(today|tonight|tomorrow|this week|this weekend|right now|currently|latest|breaking|news|score|scores|result|results|weather|forecast|price|prices|stock|exchange rate|who is the|current|upcoming|schedule|release date|just (?:announced|released|happened))\b/;
     const yearMention = /\b20(2[5-9]|[3-9]\d)\b/; // 2025 onward — recent-year questions
     return currentEventWords.test(t) || yearMention.test(t);
+  }
+
+  /**
+   * Weather, forecast, and "near me" style questions are meaningless to a
+   * generic web search without a place attached — it just returns results
+   * for wherever ranks highest, which is how Eden ends up reporting the
+   * weather in the Bahamas. Ground the query in the owner's known location
+   * unless the user already named somewhere else. Only affects the search
+   * query, never the message actually stored or shown.
+   */
+  private buildSearchQuery(text: string): string {
+    const isLocal = /\b(weather|forecast|temperature|rain|humidity|wind|near me|nearby|local)\b/i.test(
+      text
+    );
+    const mentionsPlace = /\b(?:in|at|near)\s+[A-Z][a-zA-Z]+/.test(text);
+    if (isLocal && !mentionsPlace && config.identity.ownerLocation) {
+      return `${text} in ${config.identity.ownerLocation}`;
+    }
+    return text;
   }
 
   async handleUserMessage(
@@ -93,7 +116,7 @@ export class ConversationEngine implements Engine {
     let searchResults: SearchHit[] | undefined;
     if (providers.search?.available() && this.needsSearch(text)) {
       try {
-        searchResults = await providers.search.search(text, 5);
+        searchResults = await providers.search.search(this.buildSearchQuery(text), 5);
         await bus.publish("SearchPerformed", this.id, {
           conversationId: convoId,
           query: text,
