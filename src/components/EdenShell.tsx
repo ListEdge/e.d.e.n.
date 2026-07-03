@@ -103,30 +103,6 @@ export default function EdenShell() {
     return () => clearInterval(id);
   }, [refreshStatus, refreshEvents, refreshApprovals]);
 
-  const resolveApproval = useCallback(
-    async (approvalId: string, decision: "approved" | "denied") => {
-      setResolvingId(approvalId);
-      try {
-        const res = await fetch("/api/approvals", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ approvalId, decision }),
-        });
-        const data = await res.json();
-        if (res.ok && !busy) {
-          setReply(data.result ?? (decision === "approved" ? "Approved." : "Denied."));
-        }
-      } catch {
-        /* the approval just stays in the list — the person can try again */
-      } finally {
-        setResolvingId(null);
-        refreshApprovals();
-        refreshEvents();
-      }
-    },
-    [busy, refreshApprovals, refreshEvents]
-  );
-
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
       const next = !prev;
@@ -201,6 +177,40 @@ export default function EdenShell() {
       runPlayerLoop(gen);
     },
     [muted, status?.voice.available, fetchClip, runPlayerLoop]
+  );
+
+  const resolveApproval = useCallback(
+    async (approvalId: string, decision: "approved" | "denied") => {
+      setResolvingId(approvalId);
+      // Cut off anything still playing and start a fresh speech lane, same
+      // as sending a new message — this result deserves to be heard, not
+      // silently overwritten by leftover audio from an earlier turn.
+      const gen = ++speechGen.current;
+      speechQueueRef.current = [];
+      audioRef.current?.pause();
+
+      let message: string;
+      try {
+        const res = await fetch("/api/approvals", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ approvalId, decision }),
+        });
+        const data = await res.json().catch(() => ({}) as { result?: string; error?: string });
+        message = res.ok
+          ? data.result ?? (decision === "approved" ? "Approved." : "Denied.")
+          : `Something went wrong updating that: ${data.error ?? "unknown error"}`;
+      } catch {
+        message = "I couldn't confirm that went through — check the event stream.";
+      }
+
+      setReply(message);
+      enqueueSentence(message, gen);
+      setResolvingId(null);
+      refreshApprovals();
+      refreshEvents();
+    },
+    [refreshApprovals, refreshEvents, enqueueSentence]
   );
 
   const sendIntent = useCallback(
