@@ -11,6 +11,7 @@ import CommandBar from "./hud/CommandBar";
 interface SystemStatus {
   ai: { provider: string; model: string; online: boolean };
   database: { provider: string; persistent: boolean };
+  voice: { available: boolean };
   engines: EngineStatus[];
   capabilities: Array<{ id: string; enabled: boolean }>;
   presence: string;
@@ -19,12 +20,25 @@ interface SystemStatus {
   identity: { userTitle: string };
 }
 
+const MUTE_STORAGE_KEY = "eden_voice_muted";
+
 export default function EdenShell() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [reply, setReply] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [muted, setMuted] = useState(false);
   const conversationId = useRef<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Restore the mute preference once, on first mount, client-side only.
+  useEffect(() => {
+    try {
+      setMuted(localStorage.getItem(MUTE_STORAGE_KEY) === "true");
+    } catch {
+      /* localStorage unavailable — default to unmuted */
+    }
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -54,6 +68,44 @@ export default function EdenShell() {
     return () => clearInterval(id);
   }, [refreshStatus, refreshEvents]);
 
+  const toggleMute = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(MUTE_STORAGE_KEY, String(next));
+      } catch {
+        /* ignore — preference just won't persist */
+      }
+      if (next) audioRef.current?.pause();
+      return next;
+    });
+  }, []);
+
+  const speak = useCallback(
+    async (text: string) => {
+      if (muted || !status?.voice.available || !audioRef.current) return;
+      try {
+        const res = await fetch("/api/voice/speak", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) return; // voice failing is never allowed to disrupt the text reply
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = audioRef.current;
+        audio.src = url;
+        audio.onended = () => URL.revokeObjectURL(url);
+        await audio.play().catch(() => {
+          /* autoplay can be blocked by the browser — the text reply already shown is enough */
+        });
+      } catch {
+        /* voice is a bonus, never a blocker */
+      }
+    },
+    [muted, status?.voice.available]
+  );
+
   const sendIntent = useCallback(
     async (text: string) => {
       setBusy(true);
@@ -68,6 +120,7 @@ export default function EdenShell() {
         if (res.ok) {
           conversationId.current = data.conversationId;
           setReply(data.reply);
+          speak(data.reply);
         } else {
           setReply(`Something went wrong: ${data.error ?? "unknown error"}`);
         }
@@ -79,7 +132,7 @@ export default function EdenShell() {
         refreshStatus();
       }
     },
-    [refreshEvents, refreshStatus]
+    [refreshEvents, refreshStatus, speak]
   );
 
   const capsEnabled = status?.capabilities.filter((c) => c.enabled).length ?? 0;
@@ -89,10 +142,16 @@ export default function EdenShell() {
       {/* The Eden Core */}
       <EdenOrb state={busy ? "thinking" : "idle"} />
 
+      {/* Off-screen player for spoken replies */}
+      <audio ref={audioRef} className="hidden" />
+
       <TopBar
         provider={status?.ai.provider ?? "…"}
         persistent={status?.database.persistent ?? false}
         presence={status?.presence ?? "unknown"}
+        voiceAvailable={status?.voice.available ?? false}
+        muted={muted}
+        onToggleMute={toggleMute}
       />
 
       {/* Left rail — engines */}
