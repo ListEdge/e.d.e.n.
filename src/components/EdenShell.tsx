@@ -30,6 +30,7 @@ export default function EdenShell() {
   const [muted, setMuted] = useState(false);
   const conversationId = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speechGen = useRef(0);
 
   // Restore the mute preference once, on first mount, client-side only.
   useEffect(() => {
@@ -76,31 +77,74 @@ export default function EdenShell() {
       } catch {
         /* ignore — preference just won't persist */
       }
-      if (next) audioRef.current?.pause();
+      if (next) {
+        speechGen.current += 1; // stop any in-flight speaking loop
+        audioRef.current?.pause();
+      }
       return next;
     });
   }, []);
 
+  /**
+   * Splits a reply into speakable sentences so they can be synthesized in
+   * parallel. Tiny leftover fragments (e.g. after "Mr.") get folded into
+   * the previous chunk rather than spoken as their own clip.
+   */
+  const splitIntoSentences = (text: string): string[] => {
+    const matches = text.match(/[^.!?]+[.!?]+(\s+|$)/g);
+    const parts = (matches ?? [text]).map((s) => s.trim()).filter(Boolean);
+    const merged: string[] = [];
+    for (const part of parts) {
+      if (merged.length > 0 && part.length < 8) {
+        merged[merged.length - 1] += " " + part;
+      } else {
+        merged.push(part);
+      }
+    }
+    return merged.length > 0 ? merged : [text];
+  };
+
   const speak = useCallback(
     async (text: string) => {
       if (muted || !status?.voice.available || !audioRef.current) return;
-      try {
-        const res = await fetch("/api/voice/speak", {
+      const audio = audioRef.current;
+      const myGen = ++speechGen.current;
+
+      const chunks = splitIntoSentences(text);
+
+      // Fire every sentence's TTS request at once. This is what actually
+      // buys the speed: sentence one is ready far sooner than the whole
+      // reply would have been, and by the time it finishes playing the
+      // next sentence is very likely ready too — so it sounds continuous.
+      const pending = chunks.map((chunk) =>
+        fetch("/api/voice/speak", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text }),
-        });
-        if (!res.ok) return; // voice failing is never allowed to disrupt the text reply
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = audioRef.current;
+          body: JSON.stringify({ text: chunk }),
+        })
+          .then((res) => (res.ok ? res.blob() : null))
+          .then((blob) => (blob ? URL.createObjectURL(blob) : null))
+          .catch(() => null)
+      );
+
+      for (const clip of pending) {
+        if (speechGen.current !== myGen) return; // a newer reply took over
+        const url = await clip;
+        if (!url) continue; // that sentence failed to synthesize — skip it, don't stall the rest
+        if (speechGen.current !== myGen) {
+          URL.revokeObjectURL(url);
+          return;
+        }
         audio.src = url;
-        audio.onended = () => URL.revokeObjectURL(url);
+        const finished = new Promise<void>((resolve) => {
+          audio.onended = () => resolve();
+          audio.onerror = () => resolve();
+        });
         await audio.play().catch(() => {
           /* autoplay can be blocked by the browser — the text reply already shown is enough */
         });
-      } catch {
-        /* voice is a bonus, never a blocker */
+        await finished;
+        URL.revokeObjectURL(url);
       }
     },
     [muted, status?.voice.available]
@@ -108,6 +152,8 @@ export default function EdenShell() {
 
   const sendIntent = useCallback(
     async (text: string) => {
+      speechGen.current += 1; // cut off any speech still playing from the last reply
+      audioRef.current?.pause();
       setBusy(true);
       setReply(null);
       try {
