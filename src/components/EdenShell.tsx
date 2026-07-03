@@ -7,6 +7,7 @@ import SystemPanel, { type EngineStatus } from "./hud/SystemPanel";
 import ContextPanel from "./hud/ContextPanel";
 import EventStream, { type StreamEvent } from "./hud/EventStream";
 import CommandBar from "./hud/CommandBar";
+import ApprovalsBar, { type PendingApproval } from "./hud/ApprovalsBar";
 
 interface SystemStatus {
   ai: { provider: string; model: string; online: boolean };
@@ -35,6 +36,8 @@ function extractCompleteSentences(text: string): { sentences: string[]; rest: st
 export default function EdenShell() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [events, setEvents] = useState<StreamEvent[]>([]);
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [reply, setReply] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -77,12 +80,52 @@ export default function EdenShell() {
     }
   }, []);
 
+  const refreshApprovals = useCallback(async () => {
+    try {
+      const res = await fetch("/api/approvals");
+      if (res.ok) {
+        const data = await res.json();
+        setApprovals(data.pending ?? []);
+      }
+    } catch {
+      /* HUD degrades gracefully */
+    }
+  }, []);
+
   useEffect(() => {
     refreshStatus();
     refreshEvents();
-    const id = setInterval(refreshEvents, 6000);
+    refreshApprovals();
+    const id = setInterval(() => {
+      refreshEvents();
+      refreshApprovals();
+    }, 6000);
     return () => clearInterval(id);
-  }, [refreshStatus, refreshEvents]);
+  }, [refreshStatus, refreshEvents, refreshApprovals]);
+
+  const resolveApproval = useCallback(
+    async (approvalId: string, decision: "approved" | "denied") => {
+      setResolvingId(approvalId);
+      try {
+        const res = await fetch("/api/approvals", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ approvalId, decision }),
+        });
+        const data = await res.json();
+        if (res.ok && !busy) {
+          setReply(data.result ?? (decision === "approved" ? "Approved." : "Denied."));
+        }
+      } catch {
+        /* the approval just stays in the list — the person can try again */
+      } finally {
+        setResolvingId(null);
+        refreshApprovals();
+        refreshEvents();
+      }
+    },
+    [busy, refreshApprovals, refreshEvents]
+  );
 
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
@@ -241,9 +284,10 @@ export default function EdenShell() {
         setBusy(false);
         refreshEvents();
         refreshStatus();
+        refreshApprovals();
       }
     },
-    [refreshEvents, refreshStatus, enqueueSentence]
+    [refreshEvents, refreshStatus, refreshApprovals, enqueueSentence]
   );
 
   const capsEnabled = status?.capabilities.filter((c) => c.enabled).length ?? 0;
@@ -284,8 +328,9 @@ export default function EdenShell() {
         </div>
       </div>
 
-      {/* Bottom — Eden's reply + command bar */}
+      {/* Bottom — approvals, Eden's reply + command bar */}
       <div className="absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl px-5 pb-6 sm:pb-8">
+        <ApprovalsBar approvals={approvals} onResolve={resolveApproval} resolvingId={resolvingId} />
         {(reply || busy) && (
           <div className="hud-panel mb-3 max-h-56 overflow-y-auto px-5 py-4">
             {reply ? (
