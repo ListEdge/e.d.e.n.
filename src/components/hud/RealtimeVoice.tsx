@@ -27,10 +27,14 @@ export default function RealtimeVoice({
   available,
   muted = false,
   onStatusChange,
+  audioLevelRef,
 }: {
   available: boolean;
   muted?: boolean;
   onStatusChange?: (status: RealtimeStatus) => void;
+  /** Written to continuously with the current output audio level, so the
+   *  orb (or anything else) can move in sync with the actual sound. */
+  audioLevelRef?: { current: number };
 }) {
   const [status, setStatusState] = useState<RealtimeStatus>("idle");
   const [expanded, setExpanded] = useState(false);
@@ -47,6 +51,8 @@ export default function RealtimeVoice({
   const conversationIdRef = useRef<string | null>(null);
   const toolCallBuffers = useRef<Map<string, { name: string; args: string }>>(new Map());
   const transcriptBuffers = useRef<Map<string, string>>(new Map());
+  const analysisContextRef = useRef<AudioContext | null>(null);
+  const analysisFrameRef = useRef<number | null>(null);
 
   const setStatus = useCallback(
     (next: RealtimeStatus) => {
@@ -75,8 +81,13 @@ export default function RealtimeVoice({
     pcRef.current = null;
     toolCallBuffers.current.clear();
     transcriptBuffers.current.clear();
+    if (analysisFrameRef.current) cancelAnimationFrame(analysisFrameRef.current);
+    analysisFrameRef.current = null;
+    analysisContextRef.current?.close().catch(() => {});
+    analysisContextRef.current = null;
+    if (audioLevelRef) audioLevelRef.current = 0;
     setStatus("idle");
-  }, [setStatus]);
+  }, [setStatus, audioLevelRef]);
 
   useEffect(() => disconnect, [disconnect]); // clean up if the page navigates away mid-call
 
@@ -236,7 +247,43 @@ export default function RealtimeVoice({
       audioEl.muted = muted;
       audioElRef.current = audioEl;
       pc.ontrack = (e) => {
-        audioEl.srcObject = e.streams[0];
+        const stream = e.streams[0];
+        audioEl.srcObject = stream;
+
+        // Analyse the actual output audio so the orb (or anything else)
+        // can move with real sound rather than a fixed, synthetic rhythm.
+        // Purely visual — if this fails for any reason, playback is
+        // completely unaffected.
+        try {
+          const AudioCtx =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          const audioContext = new AudioCtx();
+          analysisContextRef.current = audioContext;
+          audioContext.resume().catch(() => {});
+
+          const source = audioContext.createMediaStreamSource(stream);
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 256;
+          analyser.smoothingTimeConstant = 0.4;
+          source.connect(analyser);
+          const data = new Uint8Array(analyser.frequencyBinCount);
+
+          const sample = () => {
+            analyser.getByteTimeDomainData(data);
+            let sumSquares = 0;
+            for (let i = 0; i < data.length; i++) {
+              const v = (data[i] - 128) / 128;
+              sumSquares += v * v;
+            }
+            const rms = Math.sqrt(sumSquares / data.length);
+            if (audioLevelRef) audioLevelRef.current = rms;
+            analysisFrameRef.current = requestAnimationFrame(sample);
+          };
+          sample();
+        } catch {
+          /* the orb just won't pulse to real audio — everything else still works */
+        }
       };
 
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -286,7 +333,7 @@ export default function RealtimeVoice({
       setErrorMessage(err instanceof Error ? err.message : "Couldn't start the voice session.");
       disconnect();
     }
-  }, [handleDataChannelMessage, log, disconnect, muted, setStatus]);
+  }, [handleDataChannelMessage, log, disconnect, muted, setStatus, audioLevelRef]);
 
   if (!available) return null;
 
