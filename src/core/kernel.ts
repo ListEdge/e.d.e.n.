@@ -99,7 +99,7 @@ async function boot(): Promise<Kernel> {
     sendEmail: (to, subject, body) => communications.sendEmail(to, subject, body),
     registerTool: (manifest) => capabilities.register(manifest),
     listCallableTools: () => capabilities.listCallable(),
-    callTool: (name, args) => capabilities.callTool(name, args),
+    callTool: (name, args, opts) => capabilities.callTool(name, args, opts),
   };
   for (const engine of engines) {
     await engine.start(ctx);
