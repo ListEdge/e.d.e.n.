@@ -1,6 +1,6 @@
 import type { EventBus } from "./events/EventBus";
 import type { ProviderRegistry } from "@/providers";
-import type { Authority } from "@/types/domain";
+import type { Authority, CapabilityManifest } from "@/types/domain";
 
 /**
  * Every part of Eden is an Engine with exactly one responsibility.
@@ -28,6 +28,16 @@ export interface EngineContext {
    * engine reaches Communications without importing it).
    */
   sendEmail(to: string, subject: string, body: string): Promise<string>;
+  /**
+   * Registers a manifest with a parameters schema and a handler as a
+   * real, invocable tool — the generic mechanism that future capabilities
+   * use instead of a one-off bridge like sendEmail above.
+   */
+  registerTool(manifest: CapabilityManifest): Promise<void>;
+  /** Every tool currently registered and switched on. */
+  listCallableTools(): CapabilityManifest[];
+  /** Runs a registered tool by name, authorizing its declared authorities first. */
+  callTool(name: string, args: Record<string, unknown>): Promise<string>;
 }
 
 export interface Engine {
