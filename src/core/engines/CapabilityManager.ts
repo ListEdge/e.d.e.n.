@@ -19,7 +19,7 @@ export class CapabilityManager implements Engine {
       { id: "conversation", name: "Conversation", description: "Natural language interface", version: "1.0.0", enabled: true, authorities: ["read", "write"] },
       { id: "memory", name: "Memory", description: "Long-term knowledge and recall", version: "1.0.0", enabled: true, authorities: ["read", "write"] },
       { id: "planner", name: "Planner", description: "Goals, milestones and tasks", version: "1.0.0", enabled: true, authorities: ["read", "write"] },
-      { id: "developer", name: "Developer", description: "Plans, writes and ships software", version: "0.1.0", enabled: false, authorities: ["write", "deploy"] },
+      { id: "developer", name: "Developer", description: "Plans, writes and ships software", version: "1.0.0", enabled: true, authorities: ["write", "deploy"] },
       { id: "voice", name: "Voice", description: "Speech in and out", version: "0.1.0", enabled: false, authorities: ["read"] },
       { id: "research", name: "Research", description: "Web search and synthesis", version: "0.1.0", enabled: false, authorities: ["read"] },
       { id: "home", name: "Home", description: "Home automation scenes and devices", version: "0.1.0", enabled: false, authorities: ["write", "unlock"] },
