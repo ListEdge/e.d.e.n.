@@ -22,6 +22,7 @@ export class OpenAIRealtimeProvider implements RealtimeProvider {
   async createSession(sessionConfig: RealtimeSessionConfig): Promise<RealtimeSession> {
     const model = config.realtime.model;
     const voice = sessionConfig.voice ?? config.realtime.voice;
+    const tools = sessionConfig.tools ?? [];
 
     const res = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
@@ -48,6 +49,20 @@ export class OpenAIRealtimeProvider implements RealtimeProvider {
             },
             output: { voice },
           },
+          // Flat {type, name, description, parameters} shape — confirmed
+          // against current Realtime API session/client-event docs. This
+          // is deliberately not nested the way Chat Completions tools are.
+          ...(tools.length > 0
+            ? {
+                tools: tools.map((t) => ({
+                  type: "function",
+                  name: t.name,
+                  description: t.description,
+                  parameters: t.parameters,
+                })),
+                tool_choice: "auto",
+              }
+            : {}),
         },
       }),
     });
