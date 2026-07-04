@@ -77,6 +77,7 @@ async function boot(): Promise<Kernel> {
 
   const engines: Engine[] = [
     analytics, // first, so it sees every event including EngineStarted
+    capabilities, // early — anything below can self-register a tool at start()
     conversation,
     memory,
     knowledge,
@@ -87,7 +88,6 @@ async function boot(): Promise<Kernel> {
     scenes,
     permissions,
     notifications,
-    capabilities,
     voice,
     communications,
   ];
