@@ -327,7 +327,14 @@ export default function EdenShell() {
           <EventStream events={events} />
         </div>
       </div>
+{/* Middle — floating dashboards appear here, in the space the orb clears when compact */}
+      {dashboard && (
+        <div className="absolute inset-x-0 top-[44%] z-10 flex justify-center px-5 sm:top-[48%]">
+          <Dashboard data={dashboard} onDismiss={() => setDashboard(null)} />
+        </div>
+      )}
 
+      {/* Bottom — approvals, then either voice (primary) or typed chat (fallback) */}
       <div className="absolute inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl px-5 pb-6 sm:pb-8">
         <ApprovalsBar approvals={approvals} onResolve={resolveApproval} resolvingId={resolvingId} />
 
@@ -337,6 +344,7 @@ export default function EdenShell() {
             muted={muted}
             onStatusChange={setVoiceStatus}
             audioLevelRef={voiceAudioLevelRef}
+            onShowDashboard={setDashboard}
           />
         ) : (
           <>
