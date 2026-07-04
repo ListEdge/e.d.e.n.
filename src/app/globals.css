@@ -58,8 +58,19 @@ body {
 .dot-online {
   animation: breathe 2.6s ease-in-out infinite;
 }
+
+@keyframes dashboard-zip-in {
+  0% { opacity: 0; transform: scale(0.86) translateY(-18px); }
+  60% { opacity: 1; transform: scale(1.015) translateY(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.dashboard-zip-in {
+  animation: dashboard-zip-in 0.46s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dot-online { animation: none; }
+  .dashboard-zip-in { animation: none; }
 }
 
 ::selection {
