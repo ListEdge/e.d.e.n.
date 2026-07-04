@@ -45,7 +45,19 @@ export default function EdenShell() {
   const conversationId = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const voiceAudioLevelRef = useRef(0);
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [dashboards, setDashboards] = useState<DashboardEntry[]>([]);
+  const dashboardIdRef = useRef(0);
+
+  const showDashboard = useCallback((data: DashboardData) => {
+    const id = ++dashboardIdRef.current;
+    // Keep at most 2: the new one plus whatever was already showing, which
+    // visibly shrinks into the "previous" slot instead of vanishing.
+    setDashboards((prev) => [...prev, { id, data }].slice(-2));
+  }, []);
+
+  const dismissDashboard = useCallback((id: number) => {
+    setDashboards((prev) => prev.filter((d) => d.id !== id));
+  }, []);
 
   const speechGen = useRef(0);
   const speechQueueRef = useRef<Promise<string | null>[]>([]);
