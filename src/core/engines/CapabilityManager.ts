@@ -32,6 +32,56 @@ export class CapabilityManager implements Engine {
       { id: "finance", name: "Finance", description: "Payments and purchase approvals", version: "0.1.0", enabled: false, authorities: ["purchase"] },
     ];
     for (const cap of builtIn) this.registry.set(cap.id, cap);
+
+    // Self-registered — this tool doesn't DO anything server-side beyond
+    // shaping its own arguments into a result; the client is what actually
+    // renders it as a floating panel. "read" authority means it never
+    // needs approval — showing something on screen is never risky.
+    this.registry.set("show_dashboard", {
+      id: "show_dashboard",
+      name: "Show Dashboard",
+      description:
+        "Shows something visually on screen — a summary, a list of items, or search results — instead of only describing it out loud. Use this whenever showing something would help more than just saying it: search results, comparisons, lists, or anything with more than a couple of details worth seeing.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["read"],
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short title shown at the top of the panel" },
+          summary: {
+            type: "string",
+            description: "Optional 1-3 sentence explanation shown under the title",
+          },
+          items: {
+            type: "array",
+            description: "Optional list of items to show as cards — search results, comparison rows, or list entries",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                detail: { type: "string", description: "A short supporting line for this item" },
+                url: { type: "string", description: "Optional link this item points to" },
+              },
+              required: ["title"],
+            },
+          },
+        },
+        required: ["title"],
+      },
+      handler: async (args) => {
+        const { title, summary, items } = args as {
+          title?: string;
+          summary?: string;
+          items?: Array<{ title?: string; detail?: string; url?: string }>;
+        };
+        if (!title) return "A title is required to show something.";
+        const cleanItems = (items ?? [])
+          .filter((i): i is { title: string; detail?: string; url?: string } => Boolean(i?.title))
+          .slice(0, 12);
+        return JSON.stringify({ dashboard: { title, summary: summary ?? "", items: cleanItems } });
+      },
+    });
   }
 
   async register(manifest: CapabilityManifest): Promise<void> {
