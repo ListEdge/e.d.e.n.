@@ -9,7 +9,7 @@ import EventStream, { type StreamEvent } from "./hud/EventStream";
 import CommandBar from "./hud/CommandBar";
 import ApprovalsBar, { type PendingApproval } from "./hud/ApprovalsBar";
 import RealtimeVoice from "./hud/RealtimeVoice";
-import Dashboard, { type DashboardData } from "./hud/Dashboard";
+import Dashboard, { type DashboardData, type DashboardEntry } from "./hud/Dashboard";
 
 interface SystemStatus {
   ai: { provider: string; model: string; online: boolean };
