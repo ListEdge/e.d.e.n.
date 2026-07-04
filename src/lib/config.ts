@@ -25,6 +25,11 @@ export const config = {
     model: process.env.EDEN_REALTIME_MODEL ?? "gpt-realtime",
     voice: process.env.EDEN_REALTIME_VOICE ?? "marin",
   },
+  github: {
+    token: process.env.GITHUB_TOKEN ?? "",
+    devRepo: process.env.EDEN_DEV_REPO ?? "",
+    baseBranch: process.env.EDEN_DEV_BASE_BRANCH ?? "main",
+  },
   identity: {
     userTitle: process.env.EDEN_USER_TITLE ?? "Sir",
     ownerName: process.env.EDEN_OWNER_NAME ?? "",
