@@ -339,10 +339,12 @@ export default function EdenShell() {
           <EventStream events={events} />
         </div>
       </div>
-{/* Middle — floating dashboards appear here, in the space the orb clears when compact */}
-      {dashboard && (
-        <div className="absolute inset-x-0 top-[44%] z-10 flex justify-center px-5 sm:top-[48%]">
-          <Dashboard data={dashboard} onDismiss={() => setDashboard(null)} />
+      {/* Middle — floating dashboards appear here, in the space the orb clears when
+          compact. Bounded on both top and bottom (not just anchored from the top) so
+          it can never grow into the control bar below, however much content it has. */}
+      {dashboards.length > 0 && (
+        <div className="absolute inset-x-0 top-[38%] bottom-40 z-10 flex flex-col items-center justify-end gap-2.5 overflow-y-auto px-5 sm:top-[42%] sm:bottom-44">
+          <Dashboard entries={dashboards} onDismiss={dismissDashboard} />
         </div>
       )}
 
