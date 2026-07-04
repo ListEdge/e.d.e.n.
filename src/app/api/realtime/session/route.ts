@@ -10,9 +10,8 @@ export const runtime = "nodejs";
  * instructions once, at the start, not freshly per message — so this pulls
  * a light seed of memory rather than trying to recall per-turn.
  *
- * Tool-calling isn't wired into voice mode yet (that's Phase 2), so Eden
- * is told plainly to say so if asked to act on something, rather than
- * risk claiming a capability this mode doesn't have.
+ * The available-tools line is generated from whatever's actually
+ * registered, so it never goes stale as new tools get added later.
  */
 async function buildInstructions(): Promise<string> {
   const kernel = await getKernel();
@@ -34,11 +33,20 @@ async function buildInstructions(): Promise<string> {
     /* memory seeding is a nice-to-have — never blocks a session starting */
   }
 
+  const callableTools = kernel.capabilities.listCallable();
+  const toolsLine =
+    callableTools.length > 0
+      ? `You have tools available: ${callableTools
+          .map((t) => `${t.id} (${t.description})`)
+          .join("; ")}. Using one may come back saying it needs the user's approval, which appears as a card on screen — if so, tell them plainly and wait. Never say or imply an action happened until a tool result actually confirms it did.`
+      : `No tools are connected to this voice session yet — be honest about that rather than claiming to act.`;
+
   return [
     `You are Eden, a personal AI operating system, speaking with ${owner} by voice right now.`,
+    `Always speak and respond in English. Even if the audio you hear seems unclear, accented, or momentarily sounds like another language, stay in English — never switch languages unless ${owner} explicitly and clearly asks you to.`,
     `Address them as "${title}" — composed, precise, quietly capable. Think JARVIS, not a chatbot.`,
     `Speak naturally and concisely, the way a real conversation sounds out loud — short sentences, no bullet points, nothing that only makes sense written down.`,
-    `Tools like email are not connected to this voice mode yet. If asked to do something like that, say so plainly rather than claiming to have done it.`,
+    toolsLine,
     locationLine,
     memoryBlock,
   ]
@@ -57,7 +65,13 @@ async function mintSession() {
   }
 
   const instructions = await buildInstructions();
-  const session = await realtime.createSession({ instructions });
+  const tools = kernel.capabilities.listCallable().map((t) => ({
+    name: t.id,
+    description: t.description,
+    parameters: t.parameters ?? { type: "object", properties: {} },
+  }));
+
+  const session = await realtime.createSession({ instructions, tools });
   return NextResponse.json(session);
 }
 
