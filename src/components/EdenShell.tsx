@@ -45,6 +45,7 @@ export default function EdenShell() {
   const conversationId = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const voiceAudioLevelRef = useRef(0);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
 
   const speechGen = useRef(0);
   const speechQueueRef = useRef<Promise<string | null>[]>([]);
