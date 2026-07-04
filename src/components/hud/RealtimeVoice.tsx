@@ -28,6 +28,7 @@ export default function RealtimeVoice({
   muted = false,
   onStatusChange,
   audioLevelRef,
+  onShowDashboard,
 }: {
   available: boolean;
   muted?: boolean;
@@ -35,6 +36,9 @@ export default function RealtimeVoice({
   /** Written to continuously with the current output audio level, so the
    *  orb (or anything else) can move in sync with the actual sound. */
   audioLevelRef?: { current: number };
+  /** Fired when the show_dashboard tool is called — the tool's own result
+   *  IS the dashboard payload, passed straight through untouched. */
+  onShowDashboard?: (data: { title: string; summary?: string; items?: Array<{ title: string; detail?: string; url?: string }> }) => void;
 }) {
   const [status, setStatusState] = useState<RealtimeStatus>("idle");
   const [expanded, setExpanded] = useState(false);
@@ -115,6 +119,20 @@ export default function RealtimeVoice({
       }
       log(`← tool result: ${result}`);
 
+      // show_dashboard's result is a JSON payload meant for the screen, not
+      // the model's ears — detect it, hand it to the UI, and tell the model
+      // something short and natural instead of reading raw JSON back to it.
+      let spokenResult = result;
+      try {
+        const parsed = JSON.parse(result);
+        if (parsed?.dashboard?.title) {
+          onShowDashboard?.(parsed.dashboard);
+          spokenResult = "Shown on screen.";
+        }
+      } catch {
+        /* an ordinary text result, not a dashboard payload — nothing to do */
+      }
+
       const dc = dcRef.current;
       if (dc && dc.readyState === "open") {
         dc.send(
@@ -123,14 +141,14 @@ export default function RealtimeVoice({
             item: {
               type: "function_call_output",
               call_id: callId,
-              output: JSON.stringify({ result }),
+              output: JSON.stringify({ result: spokenResult }),
             },
           })
         );
         dc.send(JSON.stringify({ type: "response.create" }));
       }
     },
-    [log]
+    [log, onShowDashboard]
   );
 
   const persistTranscript = useCallback(async (role: "user" | "assistant", text: string) => {
