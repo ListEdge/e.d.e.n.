@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { getKernel } from "@/core/kernel";
+import { captureExplicitMemory } from "@/lib/memory-capture";
 
 export const runtime = "nodejs";
 
 /**
  * Persists one completed turn from a live voice session into the same
  * messages table typed conversations use, tagged so it's identifiable
- * as a voice turn — so voice conversations show up in history and
- * memory recall the same way typed ones do.
+ * as a voice turn - so voice conversations show up in history and
+ * memory recall the same way typed ones do. Also runs the same explicit
+ * "remember that..." capture typed conversation already has, so saying
+ * it out loud works exactly the same way as typing it.
  */
 async function saveTurn(role: "user" | "assistant", text: string, conversationId: string | null) {
   if (!text) {
@@ -26,18 +29,19 @@ async function saveTurn(role: "user" | "assistant", text: string, conversationId
   const message = await db.messages.add({
     conversation_id: convoId,
     role,
-    // "realtime" tags which channel this came through — reusing the same
-    // field typed conversation uses for its AI provider id (anthropic /
-    // openai / etc.), just as a lightweight marker here, not a real model.
     provider: "realtime",
     content: text,
   });
+
+  if (role === "user") {
+    await captureExplicitMemory(text, db, kernel.bus, "realtime", { conversationId: convoId });
+  }
 
   return NextResponse.json({ conversationId: convoId, message });
 }
 
 /**
- * GET so this can be tested by pasting a URL into a browser — no
+ * GET so this can be tested by pasting a URL into a browser - no
  * terminal needed. Example:
  *   /api/realtime/transcript?role=user&text=hello
  */
