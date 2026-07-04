@@ -35,11 +35,11 @@ search, GitHub, and deployments all have complete provider contracts in
 
 ## Quick start
 
-```bash
+bash
 npm install
 cp .env.example .env.local   # add at least one AI key
 npm run dev
-```
+
 
 Open http://localhost:3000 and state your intent.
 
@@ -55,3 +55,5 @@ version: Eden is a **kernel** that boots fourteen **engines**, each with
 one responsibility, communicating only through a typed **event bus**, and
 touching the outside world only through swappable **provider contracts**.
 No engine imports another engine. No business logic knows a vendor's name.
+
+Built with Eden.
