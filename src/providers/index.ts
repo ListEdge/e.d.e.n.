@@ -46,7 +46,7 @@ export function createProviders(): ProviderRegistry {
     calendar: null,
     storage: null,
     deployment: null,
-    github: null,
+    github: createGitHubProvider(),
     phone: null,
     payments: null,
     home: null,
