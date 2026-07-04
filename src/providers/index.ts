@@ -6,7 +6,7 @@ import { createEmailProvider, type EmailProvider } from "./email";
 import type { CalendarProvider } from "./calendar/types";
 import type { StorageProvider } from "./storage/types";
 import type { DeploymentProvider } from "./deployment/types";
-import type { GitHubProvider } from "./github/types";
+import { createGitHubProvider, type GitHubProvider } from "./github";
 import type { PhoneProvider } from "./phone/types";
 import type { PaymentsProvider } from "./payments/types";
 import type { HomeProvider } from "./home/types";
