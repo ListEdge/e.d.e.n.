@@ -6,9 +6,16 @@
  * Eden's server is never in the audio path once a session starts.
  */
 
+export interface RealtimeToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
 export interface RealtimeSessionConfig {
   instructions: string;
   voice?: string;
+  tools?: RealtimeToolDefinition[];
 }
 
 export interface RealtimeSession {
