@@ -2,26 +2,34 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type RealtimeStatus = "idle" | "connecting" | "listening" | "speaking" | "error";
+type RealtimeStatus = "idle" | "connecting" | "listening" | "speaking" | "reconnecting" | "error";
+
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECONNECT_DELAY_MS = 2000;
 
 /**
- * Real-time voice-to-voice — Eden's primary interface. Connects the
- * browser directly to OpenAI over WebRTC — audio never touches Eden's
+ * Real-time voice-to-voice - Eden's primary interface. Connects the
+ * browser directly to OpenAI over WebRTC - audio never touches Eden's
  * own server, which is the entire reason this feels fast. Eden's server
  * is only involved for: minting the session token (/api/realtime/session),
  * running any tool call the model requests (/api/realtime/tool-call), and
  * saving transcripts (/api/realtime/transcript).
  *
- * IMPORTANT — read this before assuming something's broken:
+ * Realtime sessions have a hard time limit and can drop unexpectedly -
+ * this component distinguishes a deliberate stop (the person tapped the
+ * button) from an unexpected drop (the session ended or the network
+ * hiccuped), and for the latter, automatically reconnects a few times,
+ * carrying the conversation ID forward so the new session's instructions
+ * include what was just being discussed - Eden picks back up rather than
+ * starting over. After a few failed attempts it gives up and asks for a
+ * manual tap rather than retrying forever.
+ *
+ * IMPORTANT - read this before assuming something's broken:
  * The exact event names OpenAI's GA Realtime API uses for tool calls and
  * transcripts weren't fully confirmable without a live session (see
  * docs/REALTIME-VOICE-ARCHITECTURE.md). This component matches events by
  * pattern ("contains 'function_call'", "contains 'transcript'") rather
- * than one exact string, specifically so it has the best chance of
- * working even if the precise name differs from what's guessed here. The
- * raw event log below is the ground truth — if a tool call or transcript
- * doesn't behave right, that log shows the actual event type name OpenAI
- * sent, which is exactly what's needed to fix it precisely.
+ * than one exact string. The raw event log below is the ground truth.
  */
 export default function RealtimeVoice({
   available,
@@ -33,11 +41,7 @@ export default function RealtimeVoice({
   available: boolean;
   muted?: boolean;
   onStatusChange?: (status: RealtimeStatus) => void;
-  /** Written to continuously with the current output audio level, so the
-   *  orb (or anything else) can move in sync with the actual sound. */
   audioLevelRef?: { current: number };
-  /** Fired when the show_dashboard tool is called — the tool's own result
-   *  IS the dashboard payload, passed straight through untouched. */
   onShowDashboard?: (data: { title: string; summary?: string; items?: Array<{ title: string; detail?: string; url?: string }> }) => void;
 }) {
   const [status, setStatusState] = useState<RealtimeStatus>("idle");
@@ -58,6 +62,11 @@ export default function RealtimeVoice({
   const analysisContextRef = useRef<AudioContext | null>(null);
   const analysisFrameRef = useRef<number | null>(null);
 
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const establishConnectionRef = useRef<(isReconnect: boolean) => Promise<void>>(async () => {});
+  const handleUnexpectedDisconnectRef = useRef<() => void>(() => {});
+
   const setStatus = useCallback(
     (next: RealtimeStatus) => {
       setStatusState(next);
@@ -66,8 +75,6 @@ export default function RealtimeVoice({
     [onStatusChange]
   );
 
-  // Keep the shared mute toggle meaningful for voice mode too — it has
-  // its own audio element, separate from the old text-reply player.
   useEffect(() => {
     if (audioElRef.current) audioElRef.current.muted = muted;
   }, [muted]);
@@ -76,7 +83,8 @@ export default function RealtimeVoice({
     setEventLog((prev) => [...prev.slice(-59), line]);
   }, []);
 
-  const disconnect = useCallback(() => {
+  const teardownConnection = useCallback(() => {
+    if (pcRef.current) pcRef.current.onconnectionstatechange = null;
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
     dcRef.current?.close();
     pcRef.current?.close();
@@ -90,10 +98,19 @@ export default function RealtimeVoice({
     analysisContextRef.current?.close().catch(() => {});
     analysisContextRef.current = null;
     if (audioLevelRef) audioLevelRef.current = 0;
-    setStatus("idle");
-  }, [setStatus, audioLevelRef]);
+  }, [audioLevelRef]);
 
-  useEffect(() => disconnect, [disconnect]); // clean up if the page navigates away mid-call
+  const disconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    reconnectAttemptsRef.current = 0;
+    teardownConnection();
+    setStatus("idle");
+  }, [teardownConnection, setStatus]);
+
+  useEffect(() => disconnect, [disconnect]);
 
   const relayToolCall = useCallback(
     async (callId: string, name: string, argsJson: string) => {
@@ -101,7 +118,7 @@ export default function RealtimeVoice({
       try {
         args = JSON.parse(argsJson || "{}");
       } catch {
-        /* malformed arguments — the executor below still runs, just with nothing */
+        /* malformed arguments - the executor below still runs, just with nothing */
       }
 
       log(`→ tool: ${name}(${argsJson})`);
@@ -119,9 +136,6 @@ export default function RealtimeVoice({
       }
       log(`← tool result: ${result}`);
 
-      // show_dashboard's result is a JSON payload meant for the screen, not
-      // the model's ears — detect it, hand it to the UI, and tell the model
-      // something short and natural instead of reading raw JSON back to it.
       let spokenResult = result;
       try {
         const parsed = JSON.parse(result);
@@ -130,7 +144,7 @@ export default function RealtimeVoice({
           spokenResult = "Shown on screen.";
         }
       } catch {
-        /* an ordinary text result, not a dashboard payload — nothing to do */
+        /* an ordinary text result, not a dashboard payload */
       }
 
       const dc = dcRef.current;
@@ -163,7 +177,7 @@ export default function RealtimeVoice({
       const data = await res.json();
       if (data.conversationId) conversationIdRef.current = data.conversationId;
     } catch {
-      /* saving history is best-effort — never interrupts the live conversation */
+      /* saving history is best-effort - never interrupts the live conversation */
     }
   }, []);
 
@@ -181,7 +195,6 @@ export default function RealtimeVoice({
       if (type.includes("response.created")) setStatus("speaking");
       if (type === "response.done") setStatus("listening");
 
-      // Tool calls — pattern-matched, see the note at the top of this file.
       if (type.includes("function_call_arguments")) {
         const callId = String(event.call_id ?? event.item_id ?? "");
         const delta = typeof event.delta === "string" ? event.delta : "";
@@ -206,7 +219,6 @@ export default function RealtimeVoice({
         return;
       }
 
-      // Eden's own spoken output, transcribed.
       if (type.includes("output_audio_transcript")) {
         const itemId = String(event.item_id ?? "default");
         const delta = typeof event.delta === "string" ? event.delta : "";
@@ -219,7 +231,6 @@ export default function RealtimeVoice({
         return;
       }
 
-      // What the person said, transcribed.
       if (type.includes("input_audio_transcript")) {
         const itemId = String(event.item_id ?? "default");
         if (type.includes("delta")) {
@@ -242,116 +253,151 @@ export default function RealtimeVoice({
     [log, relayToolCall, persistTranscript, setStatus]
   );
 
-  const connect = useCallback(async () => {
-    setErrorMessage(null);
-    setEventLog([]);
-    setTranscript([]);
-    setStatus("connecting");
-    setExpanded(true);
-
-    try {
-      const sessionRes = await fetch("/api/realtime/session", { method: "POST" });
-      const session = await sessionRes.json();
-      if (!sessionRes.ok) {
-        throw new Error(session.error ?? "Could not start a voice session.");
+  const establishConnection = useCallback(
+    async (isReconnect: boolean) => {
+      setErrorMessage(null);
+      if (!isReconnect) {
+        setEventLog([]);
+        setTranscript([]);
       }
-      log("session minted");
+      setStatus(isReconnect ? "reconnecting" : "connecting");
+      setExpanded(true);
 
-      const pc = new RTCPeerConnection();
-      pcRef.current = pc;
-
-      const audioEl = document.createElement("audio");
-      audioEl.autoplay = true;
-      audioEl.muted = muted;
-      audioElRef.current = audioEl;
-      pc.ontrack = (e) => {
-        const stream = e.streams[0];
-        audioEl.srcObject = stream;
-
-        // Analyse the actual output audio so the orb (or anything else)
-        // can move with real sound rather than a fixed, synthetic rhythm.
-        // Purely visual — if this fails for any reason, playback is
-        // completely unaffected.
-        try {
-          const AudioCtx =
-            window.AudioContext ||
-            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-          const audioContext = new AudioCtx();
-          analysisContextRef.current = audioContext;
-          audioContext.resume().catch(() => {});
-
-          const source = audioContext.createMediaStreamSource(stream);
-          const analyser = audioContext.createAnalyser();
-          analyser.fftSize = 256;
-          analyser.smoothingTimeConstant = 0.4;
-          source.connect(analyser);
-          const data = new Uint8Array(analyser.frequencyBinCount);
-
-          const sample = () => {
-            analyser.getByteTimeDomainData(data);
-            let sumSquares = 0;
-            for (let i = 0; i < data.length; i++) {
-              const v = (data[i] - 128) / 128;
-              sumSquares += v * v;
-            }
-            const rms = Math.sqrt(sumSquares / data.length);
-            if (audioLevelRef) audioLevelRef.current = rms;
-            analysisFrameRef.current = requestAnimationFrame(sample);
-          };
-          sample();
-        } catch {
-          /* the orb just won't pulse to real audio — everything else still works */
+      try {
+        const sessionRes = await fetch("/api/realtime/session", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ conversationId: conversationIdRef.current }),
+        });
+        const session = await sessionRes.json();
+        if (!sessionRes.ok) {
+          throw new Error(session.error ?? "Could not start a voice session.");
         }
-      };
+        log(isReconnect ? "reconnecting - session minted" : "session minted");
 
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micStreamRef.current = micStream;
-      pc.addTrack(micStream.getTracks()[0]);
+        const pc = new RTCPeerConnection();
+        pcRef.current = pc;
 
-      const dc = pc.createDataChannel("oai-events");
-      dcRef.current = dc;
-      dc.addEventListener("message", (e) => handleDataChannelMessage(e.data));
-      dc.addEventListener("open", () => {
-        log("data channel open");
-        setStatus("listening");
-      });
+        const audioEl = document.createElement("audio");
+        audioEl.autoplay = true;
+        audioEl.muted = muted;
+        audioElRef.current = audioEl;
+        pc.ontrack = (e) => {
+          const stream = e.streams[0];
+          audioEl.srcObject = stream;
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+          try {
+            const AudioCtx =
+              window.AudioContext ||
+              (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+            const audioContext = new AudioCtx();
+            analysisContextRef.current = audioContext;
+            audioContext.resume().catch(() => {});
 
-      // GA endpoint. No "?model=" query param here — the ephemeral token
-      // from /api/realtime/session already carries the model; adding the
-      // query param causes OpenAI to reject the request.
-      const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
-        method: "POST",
-        body: offer.sdp,
-        headers: {
-          Authorization: `Bearer ${session.clientSecret}`,
-          "Content-Type": "application/sdp",
-        },
-      });
+            const source = audioContext.createMediaStreamSource(stream);
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.4;
+            source.connect(analyser);
+            const data = new Uint8Array(analyser.frequencyBinCount);
 
-      if (!sdpResponse.ok) {
-        throw new Error(`OpenAI rejected the connection (status ${sdpResponse.status}).`);
+            const sample = () => {
+              analyser.getByteTimeDomainData(data);
+              let sumSquares = 0;
+              for (let i = 0; i < data.length; i++) {
+                const v = (data[i] - 128) / 128;
+                sumSquares += v * v;
+              }
+              const rms = Math.sqrt(sumSquares / data.length);
+              if (audioLevelRef) audioLevelRef.current = rms;
+              analysisFrameRef.current = requestAnimationFrame(sample);
+            };
+            sample();
+          } catch {
+            /* the orb just won't pulse to real audio - everything else still works */
+          }
+        };
+
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStreamRef.current = micStream;
+        pc.addTrack(micStream.getTracks()[0]);
+
+        const dc = pc.createDataChannel("oai-events");
+        dcRef.current = dc;
+        dc.addEventListener("message", (e) => handleDataChannelMessage(e.data));
+        dc.addEventListener("open", () => {
+          log("data channel open");
+          reconnectAttemptsRef.current = 0;
+          setStatus("listening");
+        });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
+          method: "POST",
+          body: offer.sdp,
+          headers: {
+            Authorization: `Bearer ${session.clientSecret}`,
+            "Content-Type": "application/sdp",
+          },
+        });
+
+        if (!sdpResponse.ok) {
+          throw new Error(`OpenAI rejected the connection (status ${sdpResponse.status}).`);
+        }
+
+        const answerSdp = await sdpResponse.text();
+        await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+        log("WebRTC connected");
+
+        pc.onconnectionstatechange = () => {
+          log("connection: " + pc.connectionState);
+          if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+            handleUnexpectedDisconnectRef.current();
+          }
+        };
+      } catch (err) {
+        setStatus("error");
+        setErrorMessage(err instanceof Error ? err.message : "Couldn't start the voice session.");
+        teardownConnection();
       }
+    },
+    [handleDataChannelMessage, log, muted, setStatus, audioLevelRef, teardownConnection]
+  );
 
-      const answerSdp = await sdpResponse.text();
-      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
-      log("WebRTC connected");
+  useEffect(() => {
+    establishConnectionRef.current = establishConnection;
+  }, [establishConnection]);
 
-      pc.onconnectionstatechange = () => {
-        log(`connection: ${pc.connectionState}`);
-        if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-          setStatus("error");
-          setErrorMessage("The voice connection dropped.");
-        }
-      };
-    } catch (err) {
+  const handleUnexpectedDisconnect = useCallback(() => {
+    teardownConnection();
+
+    if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       setStatus("error");
-      setErrorMessage(err instanceof Error ? err.message : "Couldn't start the voice session.");
-      disconnect();
+      setErrorMessage("Lost the connection and couldn't get it back automatically. Tap to try again.");
+      return;
     }
-  }, [handleDataChannelMessage, log, disconnect, muted, setStatus, audioLevelRef]);
+
+    reconnectAttemptsRef.current += 1;
+    const attempt = reconnectAttemptsRef.current;
+    setStatus("reconnecting");
+    log(`connection dropped - reconnecting (attempt ${attempt} of ${MAX_RECONNECT_ATTEMPTS})`);
+
+    reconnectTimeoutRef.current = setTimeout(() => {
+      establishConnectionRef.current(true);
+    }, RECONNECT_DELAY_MS * attempt);
+  }, [teardownConnection, setStatus, log]);
+
+  useEffect(() => {
+    handleUnexpectedDisconnectRef.current = handleUnexpectedDisconnect;
+  }, [handleUnexpectedDisconnect]);
+
+  const connect = useCallback(() => {
+    reconnectAttemptsRef.current = 0;
+    conversationIdRef.current = null;
+    establishConnection(false);
+  }, [establishConnection]);
 
   if (!available) return null;
 
@@ -360,15 +406,18 @@ export default function RealtimeVoice({
     connecting: "CONNECTING…",
     listening: "LISTENING…",
     speaking: "EDEN IS SPEAKING",
+    reconnecting: "RECONNECTING…",
     error: "TRY AGAIN",
   };
+
+  const isIdleOrError = status === "idle" || status === "error";
 
   return (
     <div className="pointer-events-auto flex flex-col items-center gap-2.5">
       <button
-        onClick={status === "idle" || status === "error" ? connect : disconnect}
+        onClick={isIdleOrError ? connect : disconnect}
         className={`flex w-full items-center justify-center gap-3 rounded-full px-6 py-4 font-hud text-[12px] tracking-[0.25em] transition-colors ${
-          status === "idle" || status === "error"
+          isIdleOrError
             ? "bg-pulseblue/20 text-pulseblue hover:bg-pulseblue/30"
             : "bg-pulsemagenta/20 text-pulsemagenta"
         }`}
@@ -377,7 +426,7 @@ export default function RealtimeVoice({
           className={`h-2 w-2 rounded-full ${
             status === "listening" || status === "speaking"
               ? "bg-pulsemagenta dot-online"
-              : status === "connecting"
+              : status === "connecting" || status === "reconnecting"
                 ? "bg-yellow-400 dot-online"
                 : status === "error"
                   ? "bg-red-400"
