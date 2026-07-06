@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { friendlyRegionName, type DashboardData, type DashboardRegion, type DashboardSize } from "./Dashboard";
+import {
+  friendlyRegionName,
+  sanitizeSvg,
+  type DashboardData,
+  type DashboardRegion,
+  type DashboardSize,
+} from "./Dashboard";
 
 type RealtimeStatus = "idle" | "connecting" | "listening" | "speaking" | "reconnecting" | "error";
 
@@ -343,6 +349,20 @@ export default function RealtimeVoice({
           spokenResult = onAddMindmapResearch
             ? onAddMindmapResearch(parsed.mindmapResearch.parent, parsed.mindmapResearch.nodes)
             : "Research couldn't be added to the map.";
+        } else if (parsed?.customGraphic?.title && typeof parsed.customGraphic.svg === "string") {
+          // This is the actual security boundary - the SVG text above is
+          // untrusted AI output. It only ever gets rendered if it passes
+          // the strict allowlist sanitizer; otherwise nothing is shown.
+          const cleanSvg = sanitizeSvg(parsed.customGraphic.svg);
+          if (!cleanSvg) {
+            spokenResult = "I generated something but it wasn't safe to show - try describing it a bit differently.";
+          } else {
+            const size: DashboardSize = parsed.customGraphic.size === "quadrant" ? "quadrant" : "full";
+            const data: DashboardData = { title: parsed.customGraphic.title, customGraphic: cleanSvg };
+            const actualRegion = onShowDashboard ? onShowDashboard(data, size) : "full";
+            spokenResult =
+              size === "full" ? "Shown on screen." : "Shown in the " + friendlyRegionName(actualRegion) + ".";
+          }
         }
       } catch {
         /* an ordinary text result, not a special payload */
