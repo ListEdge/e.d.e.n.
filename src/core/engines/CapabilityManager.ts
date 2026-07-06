@@ -460,7 +460,7 @@ export class CapabilityManager implements Engine {
       id: "show_custom_graphic",
       name: "Show Custom Graphic",
       description:
-        "Generates and shows a custom diagram or simple animation to visually explain something - genuine custom artwork built for exactly what's being described, not a list or chart. Use this when a visual explanation would help more than words, especially to show how a process or mechanism works, with real motion if that helps make it clearer. Describe precisely what should be drawn and how anything should move.",
+        "Draws a simple schematic diagram - boxes, arrows, labeled shapes, and light animation if useful - to show how something works, not a list or chart. Think whiteboard sketch, not realistic art or illustration - describe it to the user that way (\"let me sketch that out\"), not as a picture or drawing of the real thing. Use this to visually explain a process, mechanism, or structure. Describe precisely what shapes and labels to use and how anything should move.",
       version: "1.0.0",
       enabled: true,
       authorities: ["read"],
@@ -489,15 +489,17 @@ export class CapabilityManager implements Engine {
         try {
           const response = await ctx.providers.ai.chat({
             system: [
-              "You are a precise SVG illustrator. Given a description, generate a single, complete, valid SVG diagram or simple animation that visually explains it clearly.",
+              "You draw clean, minimal technical diagrams - think whiteboard sketch or flowchart, never a realistic illustration or scene. You are writing raw coordinates with no way to see the result, so simple and schematic will look right; anything ambitious or detailed will look broken.",
+              "Represent every idea abstractly: a labeled box for a concept, a circle for a point or step, a straight or gently curved line for a connection, a small triangle or angled line for an arrowhead showing direction. Never attempt to draw realistic objects, people, faces, buildings, or scenes - use a labeled shape instead (a box that says \"Buyer\", not a drawing of a person).",
+              "Use no more than 8 to 10 distinct visual elements in total. Fewer, clearer shapes beats many small ones.",
+              "Arrange everything in an obvious reading order - strictly left-to-right or strictly top-to-bottom - with generous, even spacing. Shapes must never overlap each other or overlap any text.",
               "Output ONLY the raw <svg>...</svg> markup - no markdown fences, no explanation, no other text whatsoever.",
               "Must be well-formed XML: every tag properly closed or self-closing, every attribute value quoted, special characters like & written as &amp;.",
-              'Include a viewBox sized for the content, for example viewBox="0 0 300 200".',
+              'Size the viewBox generously relative to the content so nothing is cramped, for example viewBox="0 0 400 250".',
               "Use only these elements: svg, g, rect, circle, ellipse, line, polyline, polygon, path, text, tspan, defs, linearGradient, radialGradient, stop, animate, animateTransform, animateMotion, marker, clipPath, title, desc, use.",
-              'For any motion, use native SVG animation elements like <animate> and <animateTransform> with a sensible dur and repeatCount="indefinite" for anything that should loop.',
+              'For any motion, use native SVG animation elements like <animate> and <animateTransform> with a sensible dur and repeatCount="indefinite" for anything that should loop. Keep motion simple - move, fade, or grow one property at a time.',
               "Never use script, foreignObject, iframe, object, or embed elements, any event handler attribute, inline style attributes, or any external reference - if you use href on a <use> element it must point only to a local #fragment defined in the same document.",
               "Use a palette fitting a dark interface - blues like #3B7BFF, purples like #8B6CFF, magenta like #E23FFF, light text like #E8E6F5 - and do not draw an opaque background rectangle.",
-              "Keep it clean and legible, not overly busy.",
             ].join(" "),
             messages: [{ role: "user", content: parsed.description }],
             maxTokens: 2000,
