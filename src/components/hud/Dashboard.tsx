@@ -28,6 +28,11 @@ export interface DashboardData {
   items?: DashboardItem[];
   chart?: DashboardChart;
   mindmap?: MindMapNode[];
+  /** Already-sanitized SVG markup, safe to render directly - sanitization
+   *  happens once, at the point AI-generated content enters the client,
+   *  in RealtimeVoice.tsx. Never trust this field if it originates
+   *  anywhere else. */
+  customGraphic?: string;
 }
 
 export interface DashboardSlot {
@@ -205,6 +210,90 @@ function MindMapView(props: { nodes: MindMapNode[] }) {
   );
 }
 
+const ALLOWED_SVG_TAGS = new Set([
+  "svg", "g", "rect", "circle", "ellipse", "line", "polyline", "polygon", "path",
+  "text", "tspan", "defs", "lineargradient", "radialgradient", "stop",
+  "animate", "animatetransform", "animatemotion", "marker", "clippath",
+  "title", "desc", "use",
+]);
+
+const ALLOWED_SVG_ATTRS = new Set([
+  "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+  "width", "height", "d", "points", "fill", "stroke", "stroke-width",
+  "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "opacity",
+  "fill-opacity", "stroke-opacity", "transform", "viewbox", "class", "id",
+  "font-size", "font-weight", "font-family", "text-anchor", "dominant-baseline",
+  "offset", "stop-color", "stop-opacity", "attributename", "from", "to",
+  "dur", "repeatcount", "values", "keytimes", "begin", "path",
+  "gradientunits", "gradienttransform", "markerwidth", "markerheight",
+  "orient", "refx", "refy", "preserveaspectratio", "xmlns",
+]);
+
+/**
+ * Strict allowlist sanitizer for AI-generated SVG. This is the actual
+ * security boundary, not the prompt asking the model to behave - never
+ * trust generated markup by construction. Anything not on the allowlist
+ * is removed outright: unknown elements are deleted entirely, unknown
+ * attributes are stripped from elements that are otherwise kept. Every
+ * event-handler-style attribute (onclick, onload, etc.), every inline
+ * style attribute, and every external reference (href must be a local
+ * #fragment or it's removed) is stripped unconditionally, regardless of
+ * the allowlist. Returns null if the input doesn't even parse as SVG.
+ */
+export function sanitizeSvg(rawSvg: string): string | null {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(rawSvg, "image/svg+xml");
+    if (doc.querySelector("parsererror")) return null;
+
+    const root = doc.documentElement;
+    if (!root || root.tagName.toLowerCase() !== "svg") return null;
+
+    function cleanAttributes(el: Element) {
+      for (const attr of Array.from(el.attributes)) {
+        const attrName = attr.name.toLowerCase();
+        if (attrName.startsWith("on")) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+        if (attrName === "style") {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+        if (attrName === "href" || attrName === "xlink:href") {
+          if (!attr.value.startsWith("#")) el.removeAttribute(attr.name);
+          continue;
+        }
+        if (!ALLOWED_SVG_ATTRS.has(attrName)) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+
+    function clean(node: Element) {
+      for (const child of Array.from(node.children)) {
+        if (!ALLOWED_SVG_TAGS.has(child.tagName.toLowerCase())) {
+          child.remove();
+          continue;
+        }
+        cleanAttributes(child);
+        clean(child);
+      }
+    }
+
+    cleanAttributes(root);
+    clean(root);
+
+    if (!root.getAttribute("viewBox")) {
+      root.setAttribute("viewBox", "0 0 300 200");
+    }
+
+    return root.outerHTML;
+  } catch {
+    return null;
+  }
+}
+
 function DashboardCard(props: { data: DashboardData; full: boolean }) {
   const data = props.data;
   const full = props.full;
@@ -224,6 +313,13 @@ function DashboardCard(props: { data: DashboardData; full: boolean }) {
         <div className="mt-2 min-h-0 flex-1">
           <MindMapView nodes={data.mindmap} />
         </div>
+      ) : null}
+
+      {data.customGraphic ? (
+        <div
+          className="mt-2 min-h-0 flex-1 [&_svg]:h-full [&_svg]:w-full"
+          dangerouslySetInnerHTML={{ __html: data.customGraphic }}
+        />
       ) : null}
 
       {data.chart && data.chart.values && data.chart.values.length > 0 ? (
