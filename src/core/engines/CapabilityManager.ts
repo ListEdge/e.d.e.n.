@@ -324,6 +324,132 @@ export class CapabilityManager implements Engine {
         return "Dashboard dismissal should have been handled directly in the browser.";
       },
     });
+
+    // Mind-mapping - a living, branching structure that grows as the
+    // conversation does. start/add/get/remove are pure state operations on
+    // what's already on screen, so (like the dashboard-awareness tools)
+    // they're answered entirely client-side. add_mindmap_research is the
+    // one exception - it needs the search provider, so it runs server-side
+    // and hands its result back for the client to attach as new nodes.
+    this.registry.set("start_mindmap", {
+      id: "start_mindmap",
+      name: "Start Mind Map",
+      description:
+        "Starts a new live mind map for the given topic, shown full-screen since it needs room to grow. Use this when the user wants to think through, brainstorm, or map out an idea out loud. Replaces any existing map.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["read"],
+      parameters: {
+        type: "object",
+        properties: {
+          topic: { type: "string", description: "The central topic or idea to put at the center of the map" },
+        },
+        required: ["topic"],
+      },
+      handler: async function () {
+        return "Starting a mind map should have been handled directly in the browser.";
+      },
+    });
+
+    this.registry.set("add_mindmap_idea", {
+      id: "add_mindmap_idea",
+      name: "Add Mind Map Idea",
+      description:
+        "Adds a new branch to the live mind map, attached under an existing point. Use this for every new concept as the conversation surfaces it, whether it came from the user or is a suggestion worth adding. Check get_mindmap_structure first if you're not sure what's already on the map.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["read"],
+      parameters: {
+        type: "object",
+        properties: {
+          parent: { type: "string", description: "Which existing point to attach this under - matched by its label" },
+          label: { type: "string", description: "Short label for the new idea" },
+          detail: { type: "string", description: "Optional one-line elaboration" },
+        },
+        required: ["parent", "label"],
+      },
+      handler: async function () {
+        return "Adding to the mind map should have been handled directly in the browser.";
+      },
+    });
+
+    this.registry.set("add_mindmap_research", {
+      id: "add_mindmap_research",
+      name: "Add Mind Map Research",
+      description:
+        "Searches the web and adds the real results as new branches under an existing point on the mind map. Use this when a branch would genuinely benefit from current information or real data, not for every branch.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["read"],
+      parameters: {
+        type: "object",
+        properties: {
+          parent: { type: "string", description: "Which existing point to attach the results under - matched by its label" },
+          searchQuery: { type: "string", description: "What to search for" },
+        },
+        required: ["parent", "searchQuery"],
+      },
+      handler: async (args) => {
+        const parsed = args as { parent?: string; searchQuery?: string };
+        if (!parsed.parent || !parsed.searchQuery) {
+          return "I need both which branch to attach to and something to search for.";
+        }
+        const search = ctx.providers.search;
+        if (!search || !search.available()) {
+          return "Search isn't connected, so I can't pull in real data for that branch.";
+        }
+        try {
+          const hits = await search.search(parsed.searchQuery, 4, { topic: "general" });
+          if (hits.length === 0) {
+            return "That search didn't turn up anything to add.";
+          }
+          return JSON.stringify({
+            mindmapResearch: {
+              parent: parsed.parent,
+              nodes: hits.map(function (h) {
+                return { label: h.title, detail: h.snippet };
+              }),
+            },
+          });
+        } catch {
+          return "That search failed, so nothing was added to the map.";
+        }
+      },
+    });
+
+    this.registry.set("get_mindmap_structure", {
+      id: "get_mindmap_structure",
+      name: "Get Mind Map Structure",
+      description:
+        "Returns the full current mind map - every point and how they connect - so you know exactly what's already there before adding to it or referencing a branch.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["read"],
+      parameters: { type: "object", properties: {} },
+      handler: async function () {
+        return JSON.stringify({ nodes: [], note: "Mind map structure is tracked in the browser and should have been answered there directly." });
+      },
+    });
+
+    this.registry.set("remove_mindmap_node", {
+      id: "remove_mindmap_node",
+      name: "Remove Mind Map Node",
+      description:
+        "Removes a branch from the mind map, along with anything under it. Use this when a point turns out to be a dead end or the user asks to drop it. Cannot remove the central topic - dismiss the whole map for that.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["read"],
+      parameters: {
+        type: "object",
+        properties: {
+          reference: { type: "string", description: "Which branch to remove - matched by its label" },
+        },
+        required: ["reference"],
+      },
+      handler: async function () {
+        return "Removing from the mind map should have been handled directly in the browser.";
+      },
+    });
   }
 
   async register(manifest: CapabilityManifest): Promise<void> {
