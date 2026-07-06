@@ -43,6 +43,11 @@ export default function RealtimeVoice({
   getDashboardState,
   onShowSystemStatus,
   onShowEventLog,
+  onStartMindmap,
+  onAddMindmapIdea,
+  onAddMindmapResearch,
+  getMindmapStructure,
+  onRemoveMindmapNode,
 }: {
   available: boolean;
   muted?: boolean;
@@ -64,6 +69,17 @@ export default function RealtimeVoice({
   onShowSystemStatus?: () => DashboardRegion;
   /** Shows the recent event log as a dashboard - client state, on request only. */
   onShowEventLog?: () => DashboardRegion;
+  /** Starts a fresh mind map for the given topic - client state. */
+  onStartMindmap?: (topic: string) => DashboardRegion;
+  /** Adds a plain idea node under an existing branch - client state. */
+  onAddMindmapIdea?: (parent: string, label: string, detail?: string) => string;
+  /** Attaches real search results (already fetched server-side) as new
+   *  nodes under an existing branch - client state. */
+  onAddMindmapResearch?: (parent: string, nodes: Array<{ label: string; detail?: string }>) => string;
+  /** Reports the full current mind map structure - client state. */
+  getMindmapStructure?: () => { nodes: Array<{ label: string; parent: string | null }> };
+  /** Removes a branch (and its sub-branches) from the mind map - client state. */
+  onRemoveMindmapNode?: (reference: string) => string;
 }) {
   const [status, setStatusState] = useState<RealtimeStatus>("idle");
   const [expanded, setExpanded] = useState(false);
@@ -217,6 +233,40 @@ export default function RealtimeVoice({
         sendToolResult(callId, resultText);
         return;
       }
+      if (name === "start_mindmap") {
+        const topic = typeof args.topic === "string" && args.topic ? args.topic : "New idea";
+        onStartMindmap?.(topic);
+        const resultText = "Started a mind map for " + topic + ".";
+        log(`← (client) ${resultText}`);
+        sendToolResult(callId, resultText);
+        return;
+      }
+      if (name === "add_mindmap_idea") {
+        const parent = typeof args.parent === "string" ? args.parent : "";
+        const label = typeof args.label === "string" ? args.label : "";
+        const detail = typeof args.detail === "string" ? args.detail : undefined;
+        const resultText =
+          parent && label && onAddMindmapIdea
+            ? onAddMindmapIdea(parent, label, detail)
+            : "I need both a branch to attach to and a label.";
+        log(`← (client) ${resultText}`);
+        sendToolResult(callId, resultText);
+        return;
+      }
+      if (name === "get_mindmap_structure") {
+        const structure = getMindmapStructure ? getMindmapStructure() : { nodes: [] };
+        const resultText = JSON.stringify(structure);
+        log(`← (client) ${resultText}`);
+        sendToolResult(callId, resultText);
+        return;
+      }
+      if (name === "remove_mindmap_node") {
+        const reference = typeof args.reference === "string" ? args.reference : "";
+        const resultText = onRemoveMindmapNode ? onRemoveMindmapNode(reference) : "Nothing to remove.";
+        log(`← (client) ${resultText}`);
+        sendToolResult(callId, resultText);
+        return;
+      }
       if (name === "dismiss_dashboard") {
         const reference = typeof args.reference === "string" ? args.reference : "";
         const resultText = onDismissDashboard ? onDismissDashboard(reference) : "Nothing to dismiss.";
@@ -289,9 +339,13 @@ export default function RealtimeVoice({
             : "full";
           spokenResult =
             size === "full" ? "Shown on screen." : "Shown in the " + friendlyRegionName(actualRegion) + ".";
+        } else if (parsed?.mindmapResearch?.parent && Array.isArray(parsed.mindmapResearch.nodes)) {
+          spokenResult = onAddMindmapResearch
+            ? onAddMindmapResearch(parsed.mindmapResearch.parent, parsed.mindmapResearch.nodes)
+            : "Research couldn't be added to the map.";
         }
       } catch {
-        /* an ordinary text result, not a dashboard payload */
+        /* an ordinary text result, not a special payload */
       }
 
       sendToolResult(callId, spokenResult);
@@ -304,6 +358,11 @@ export default function RealtimeVoice({
       getDashboardState,
       onShowSystemStatus,
       onShowEventLog,
+      onStartMindmap,
+      onAddMindmapIdea,
+      onAddMindmapResearch,
+      getMindmapStructure,
+      onRemoveMindmapNode,
       sendToolResult,
       sendSessionUpdate,
     ]
