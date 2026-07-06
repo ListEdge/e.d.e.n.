@@ -15,11 +15,19 @@ export interface DashboardChart {
   values: number[];
 }
 
+export interface MindMapNode {
+  id: number;
+  label: string;
+  detail?: string;
+  parentId: number | null;
+}
+
 export interface DashboardData {
   title: string;
   summary?: string;
   items?: DashboardItem[];
   chart?: DashboardChart;
+  mindmap?: MindMapNode[];
 }
 
 export interface DashboardSlot {
@@ -76,6 +84,127 @@ function BarChart(props: { chart: DashboardChart }) {
   );
 }
 
+/**
+ * Pure radial-tree layout - no graph library. Each node gets an angular
+ * slice proportional to how many leaf descendants it has, so siblings
+ * never overlap by construction, at any depth or branching factor.
+ * Radius grows with depth so generations fan outward from the root.
+ */
+function layoutMindMap(nodes: MindMapNode[]): Map<number, { x: number; y: number }> {
+  const positions = new Map<number, { x: number; y: number }>();
+  const childrenOf = new Map<number, MindMapNode[]>();
+  let root: MindMapNode | undefined;
+
+  for (const n of nodes) {
+    if (n.parentId === null) {
+      root = n;
+    } else {
+      const list = childrenOf.get(n.parentId) ?? [];
+      list.push(n);
+      childrenOf.set(n.parentId, list);
+    }
+  }
+  if (!root) return positions;
+
+  function countLeaves(nodeId: number): number {
+    const children = childrenOf.get(nodeId) ?? [];
+    if (children.length === 0) return 1;
+    return children.reduce(function (sum, c) {
+      return sum + countLeaves(c.id);
+    }, 0);
+  }
+
+  function assign(nodeId: number, startAngle: number, endAngle: number, depth: number) {
+    const midAngle = (startAngle + endAngle) / 2;
+    const radius = depth * 100;
+    positions.set(nodeId, { x: radius * Math.cos(midAngle), y: radius * Math.sin(midAngle) });
+
+    const children = childrenOf.get(nodeId) ?? [];
+    if (children.length === 0) return;
+    const totalLeaves = children.reduce(function (sum, c) {
+      return sum + countLeaves(c.id);
+    }, 0);
+    let currentAngle = startAngle;
+    for (const child of children) {
+      const share = countLeaves(child.id) / totalLeaves;
+      const childEndAngle = currentAngle + share * (endAngle - startAngle);
+      assign(child.id, currentAngle, childEndAngle, depth + 1);
+      currentAngle = childEndAngle;
+    }
+  }
+
+  assign(root.id, 0, Math.PI * 2, 0);
+  return positions;
+}
+
+function MindMapView(props: { nodes: MindMapNode[] }) {
+  const nodes = props.nodes;
+  const positions = layoutMindMap(nodes);
+  if (positions.size === 0) return null;
+
+  let minX = 0;
+  let maxX = 0;
+  let minY = 0;
+  let maxY = 0;
+  positions.forEach(function (p) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  });
+  const padding = 90;
+  const viewMinX = minX - padding;
+  const viewMinY = minY - padding;
+  const viewWidth = maxX - minX + padding * 2;
+  const viewHeight = maxY - minY + padding * 2;
+
+  return (
+    <svg
+      viewBox={viewMinX + " " + viewMinY + " " + viewWidth + " " + viewHeight}
+      className="h-full w-full"
+    >
+      {nodes.map(function (n) {
+        if (n.parentId === null) return null;
+        const from = positions.get(n.parentId);
+        const to = positions.get(n.id);
+        if (!from || !to) return null;
+        return (
+          <line
+            key={"edge-" + n.id}
+            x1={from.x}
+            y1={from.y}
+            x2={to.x}
+            y2={to.y}
+            stroke="#8B6CFF"
+            strokeOpacity={0.35}
+            strokeWidth={1.5}
+          />
+        );
+      })}
+      {nodes.map(function (n) {
+        const pos = positions.get(n.id);
+        if (!pos) return null;
+        const isRoot = n.parentId === null;
+        return (
+          <g key={"node-" + n.id} transform={"translate(" + pos.x + "," + pos.y + ")"}>
+            <circle r={isRoot ? 8 : 5} fill={isRoot ? "#E23FFF" : "#3B7BFF"} />
+            <text
+              x={0}
+              y={isRoot ? -14 : -10}
+              fontSize={isRoot ? 13 : 10}
+              textAnchor="middle"
+              fill="#E8E6F5"
+              fontWeight={isRoot ? 600 : 400}
+            >
+              {n.label.length > 24 ? n.label.slice(0, 24) + "…" : n.label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function DashboardCard(props: { data: DashboardData; full: boolean }) {
   const data = props.data;
   const full = props.full;
@@ -90,6 +219,12 @@ function DashboardCard(props: { data: DashboardData; full: boolean }) {
     <div className="hud-panel dashboard-zip-in pointer-events-auto flex h-full w-full flex-col overflow-hidden px-4 py-3">
       <h2 className={titleClass}>{data.title}</h2>
       {data.summary ? <p className={summaryClass}>{data.summary}</p> : null}
+
+      {data.mindmap && data.mindmap.length > 0 ? (
+        <div className="mt-2 min-h-0 flex-1">
+          <MindMapView nodes={data.mindmap} />
+        </div>
+      ) : null}
 
       {data.chart && data.chart.values && data.chart.values.length > 0 ? (
         <div className="mt-2">
