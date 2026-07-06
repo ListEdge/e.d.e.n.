@@ -450,6 +450,71 @@ export class CapabilityManager implements Engine {
         return "Removing from the mind map should have been handled directly in the browser.";
       },
     });
+
+    // The AI generates SVG here, but this is NOT the safety boundary -
+    // the raw text returned below is untrusted until the client runs it
+    // through sanitizeSvg() before ever rendering it. This handler's job
+    // is only generation; enforcement happens client-side, where the
+    // actual DOM parser lives.
+    this.registry.set("show_custom_graphic", {
+      id: "show_custom_graphic",
+      name: "Show Custom Graphic",
+      description:
+        "Generates and shows a custom diagram or simple animation to visually explain something - genuine custom artwork built for exactly what's being described, not a list or chart. Use this when a visual explanation would help more than words, especially to show how a process or mechanism works, with real motion if that helps make it clearer. Describe precisely what should be drawn and how anything should move.",
+      version: "1.0.0",
+      enabled: true,
+      authorities: ["read"],
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short title for the graphic" },
+          description: {
+            type: "string",
+            description: "Precise description of what to draw, including any motion or animation wanted",
+          },
+          size: {
+            type: "string",
+            enum: ["quadrant", "full"],
+            description: "Defaults to full - custom illustrations usually need real room to be legible",
+          },
+        },
+        required: ["title", "description"],
+      },
+      handler: async (args) => {
+        const parsed = args as { title?: string; description?: string; size?: string };
+        if (!parsed.title || !parsed.description) {
+          return "I need both a title and a description of what to draw.";
+        }
+
+        try {
+          const response = await ctx.providers.ai.chat({
+            system: [
+              "You are a precise SVG illustrator. Given a description, generate a single, complete, valid SVG diagram or simple animation that visually explains it clearly.",
+              "Output ONLY the raw <svg>...</svg> markup - no markdown fences, no explanation, no other text whatsoever.",
+              "Must be well-formed XML: every tag properly closed or self-closing, every attribute value quoted, special characters like & written as &amp;.",
+              'Include a viewBox sized for the content, for example viewBox="0 0 300 200".',
+              "Use only these elements: svg, g, rect, circle, ellipse, line, polyline, polygon, path, text, tspan, defs, linearGradient, radialGradient, stop, animate, animateTransform, animateMotion, marker, clipPath, title, desc, use.",
+              'For any motion, use native SVG animation elements like <animate> and <animateTransform> with a sensible dur and repeatCount="indefinite" for anything that should loop.',
+              "Never use script, foreignObject, iframe, object, or embed elements, any event handler attribute, inline style attributes, or any external reference - if you use href on a <use> element it must point only to a local #fragment defined in the same document.",
+              "Use a palette fitting a dark interface - blues like #3B7BFF, purples like #8B6CFF, magenta like #E23FFF, light text like #E8E6F5 - and do not draw an opaque background rectangle.",
+              "Keep it clean and legible, not overly busy.",
+            ].join(" "),
+            messages: [{ role: "user", content: parsed.description }],
+            maxTokens: 2000,
+            temperature: 0.4,
+          });
+
+          const svgText = response.text.trim();
+          const size = parsed.size === "quadrant" ? "quadrant" : "full";
+
+          return JSON.stringify({
+            customGraphic: { title: parsed.title, svg: svgText, size: size },
+          });
+        } catch {
+          return "I couldn't generate that graphic - try describing it a bit differently.";
+        }
+      },
+    });
   }
 
   async register(manifest: CapabilityManifest): Promise<void> {
