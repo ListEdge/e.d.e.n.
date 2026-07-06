@@ -14,6 +14,7 @@ import Dashboard, {
   type DashboardRegion,
   type DashboardSize,
   type DashboardSlot,
+  type MindMapNode,
 } from "./hud/Dashboard";
 
 interface SystemStatus {
@@ -204,6 +205,147 @@ export default function EdenShell() {
     const data: DashboardData = { title: "Event Log", items };
     return placeDashboard(data, items.length > 4 ? "full" : "quadrant");
   }, [events, placeDashboard]);
+
+  const mindmapNodeIdRef = useRef(0);
+
+  /** A mind map is just dashboard content, like everything else - it
+   *  always claims the full slot since a growing branching structure
+   *  needs the room, and starting a new one replaces any old one. */
+  const startMindmap = useCallback(
+    (topic: string): DashboardRegion => {
+      const rootId = ++mindmapNodeIdRef.current;
+      const data: DashboardData = {
+        title: topic,
+        mindmap: [{ id: rootId, label: topic, parentId: null }],
+      };
+      return placeDashboard(data, "full");
+    },
+    [placeDashboard]
+  );
+
+  /** Finds the current mind map slot, if any - shared by every mind map
+   *  mutation below so they all agree on what "the current map" means. */
+  const findMindmapSlot = useCallback((slots: DashboardSlot[]) => {
+    return slots.find((s) => s.data.mindmap && s.data.mindmap.length > 0);
+  }, []);
+
+  const addMindmapIdea = useCallback(
+    (parentReference: string, label: string, detail?: string): string => {
+      let result = "There's no mind map open to add that to.";
+      setDashboardSlots((prev) => {
+        const slot = findMindmapSlot(prev);
+        if (!slot || !slot.data.mindmap) return prev;
+
+        const needle = parentReference.trim().toLowerCase();
+        const parent = slot.data.mindmap.find((n) => n.label.toLowerCase().includes(needle));
+        if (!parent) {
+          result = `I couldn't find "${parentReference}" on the map.`;
+          return prev;
+        }
+
+        const newNode: MindMapNode = {
+          id: ++mindmapNodeIdRef.current,
+          label,
+          detail,
+          parentId: parent.id,
+        };
+        result = `Added "${label}" under "${parent.label}".`;
+        const updatedMindmap = [...slot.data.mindmap, newNode];
+        return prev.map((s) =>
+          s.id === slot.id ? { ...s, data: { ...s.data, mindmap: updatedMindmap } } : s
+        );
+      });
+      return result;
+    },
+    [findMindmapSlot]
+  );
+
+  /** Attaches real search results as new nodes under an existing branch -
+   *  the search itself already happened server-side; this just wires the
+   *  results into the map's state. */
+  const addMindmapResearchNodes = useCallback(
+    (parentReference: string, nodes: Array<{ label: string; detail?: string }>): string => {
+      let result = "There's no mind map open to add that to.";
+      setDashboardSlots((prev) => {
+        const slot = findMindmapSlot(prev);
+        if (!slot || !slot.data.mindmap) return prev;
+
+        const needle = parentReference.trim().toLowerCase();
+        const parent = slot.data.mindmap.find((n) => n.label.toLowerCase().includes(needle));
+        if (!parent) {
+          result = `I couldn't find "${parentReference}" on the map.`;
+          return prev;
+        }
+
+        const newNodes: MindMapNode[] = nodes.map((n) => ({
+          id: ++mindmapNodeIdRef.current,
+          label: n.label,
+          detail: n.detail,
+          parentId: parent.id,
+        }));
+        result = `Added ${newNodes.length} result${newNodes.length === 1 ? "" : "s"} under "${parent.label}".`;
+        const updatedMindmap = [...slot.data.mindmap, ...newNodes];
+        return prev.map((s) =>
+          s.id === slot.id ? { ...s, data: { ...s.data, mindmap: updatedMindmap } } : s
+        );
+      });
+      return result;
+    },
+    [findMindmapSlot]
+  );
+
+  const getMindmapStructure = useCallback((): { nodes: Array<{ label: string; parent: string | null }> } => {
+    const slot = findMindmapSlot(dashboardSlots);
+    if (!slot || !slot.data.mindmap) return { nodes: [] };
+    const byId = new Map(slot.data.mindmap.map((n) => [n.id, n.label]));
+    return {
+      nodes: slot.data.mindmap.map((n) => ({
+        label: n.label,
+        parent: n.parentId !== null ? (byId.get(n.parentId) ?? null) : null,
+      })),
+    };
+  }, [dashboardSlots, findMindmapSlot]);
+
+  /** Removes a branch and everything under it - cascading, so nothing is
+   *  left pointing at a parent that no longer exists. */
+  const removeMindmapNode = useCallback(
+    (reference: string): string => {
+      let result = "I couldn't find that on the map.";
+      setDashboardSlots((prev) => {
+        const slot = findMindmapSlot(prev);
+        if (!slot || !slot.data.mindmap) return prev;
+
+        const needle = reference.trim().toLowerCase();
+        const target = slot.data.mindmap.find(
+          (n) => n.parentId !== null && n.label.toLowerCase().includes(needle)
+        );
+        if (!target) {
+          result = `I couldn't find "${reference}" on the map - if that's the main topic, close the whole map instead.`;
+          return prev;
+        }
+
+        const toRemove = new Set<number>([target.id]);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const n of slot.data.mindmap) {
+            if (n.parentId !== null && toRemove.has(n.parentId) && !toRemove.has(n.id)) {
+              toRemove.add(n.id);
+              changed = true;
+            }
+          }
+        }
+
+        result = `Removed "${target.label}"${toRemove.size > 1 ? " and its sub-branches." : "."}`;
+        const updatedMindmap = slot.data.mindmap.filter((n) => !toRemove.has(n.id));
+        return prev.map((s) =>
+          s.id === slot.id ? { ...s, data: { ...s.data, mindmap: updatedMindmap } } : s
+        );
+      });
+      return result;
+    },
+    [findMindmapSlot]
+  );
 
   // Generation counter: invalidates stale speech loops when a new message
   // is sent or voice is muted mid-reply.
@@ -506,6 +648,11 @@ export default function EdenShell() {
             onMoveDashboard={moveDashboardByReference}
             onShowSystemStatus={showSystemStatus}
             onShowEventLog={showEventLog}
+            onStartMindmap={startMindmap}
+            onAddMindmapIdea={addMindmapIdea}
+            onAddMindmapResearch={addMindmapResearchNodes}
+            getMindmapStructure={getMindmapStructure}
+            onRemoveMindmapNode={removeMindmapNode}
             getDashboardState={getDashboardState}
           />
         ) : (
